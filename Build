@@ -1,0 +1,6 @@
+# comment
+
+YAR=69 # and comment here
+FLAGS=-f 69
+
+$FLAGS:
