@@ -3,4 +3,8 @@
 YAR=69 # and comment here
 FLAGS=-f 69
 
-$FLAGS:
+$FLAGS: main.c foo.c
+    $CC $FLAGS -o $@ $<
+
+$FOO: bar.c
+    $ejnrew

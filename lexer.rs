@@ -8,9 +8,9 @@ use std::{
     },
 };
 
-pub type ColStr<'b> = (usize, &'b str);
+pub type ColStr<'a> = (usize, &'a str);
 pub type Tokens<'a> = Vec::<Token<'a>>;
-pub type LinizedTokens<'a> = Vec::<Tokens<'a>>;
+pub type LinizedTokens<'a> = Vec::<(usize, Tokens<'a>)>;
 pub type Lines<'a> = Peekable<Enumerate<str::Lines<'a>>>;
 
 #[derive(Debug)]
@@ -42,6 +42,7 @@ impl fmt::Display for Loc<'_> {
 }
 
 pub struct Token<'a> {
+    pub wc:  usize,
     pub typ: TokenType,
     pub loc: Loc<'a>,
     pub str: &'a str,
@@ -49,7 +50,7 @@ pub struct Token<'a> {
 
 impl fmt::Display for Token<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{l}: {t:?}: {s}", l = self.loc, t = self.typ, s = self.str)
+        write!(f, "{l}: {t:?}: \"{s}\"", l = self.loc, t = self.typ, s = self.str)
     }
 }
 
@@ -60,8 +61,9 @@ impl fmt::Debug for Token<'_> {
 }
 
 impl<'a> Token<'a> {
-    pub fn new(typ: TokenType, loc: Loc<'a>, str: &'a str) -> Self {
-        Self { typ, loc, str }
+    #[inline]
+    pub fn new(wc: usize, typ: TokenType, loc: Loc<'a>, str: &'a str) -> Self {
+        Self { wc, typ, loc, str }
     }
 }
 
@@ -72,6 +74,9 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    const COMMENT_SYMBOL: u8 = b'#';
+
+    #[inline]
     pub fn new(file_path: &'a str, content: &'a str) -> Self {
         Self { file_path, row: 0, iter: content.lines().enumerate().peekable() }
     }
@@ -79,7 +84,7 @@ impl<'a> Lexer<'a> {
     pub fn lex_line(&mut self, line: ColStr<'a>, ts: &mut LinizedTokens<'a>) {
         use TokenType::*;
 
-        let strs = Self::get_strs(line.1);
+        let (wc, strs) = Self::get_strs(line.1);
         let len = strs.len();
         if len < 1 {
             self.row += 1;
@@ -87,7 +92,9 @@ impl<'a> Lexer<'a> {
         }
 
         let mut iter = strs.into_iter().peekable();
-        if matches!(iter.peek(), Some((_, s)) if s.bytes().next().eq(&Some(b'#'))) {
+
+        // Line starts comment, skipping
+        if matches!(iter.peek(), Some((.., s)) if s.bytes().next().eq(&Some(Self::COMMENT_SYMBOL))) {
             self.row += 1;
             return
         }
@@ -98,8 +105,10 @@ impl<'a> Lexer<'a> {
             let Some(first) = bytes.next() else { continue };
             let second = bytes.next();
             let tt = match first {
+                // Comment started, can happen if you do that:
+                // FLAGS=-f 69 # comment here
                 b'#'  => {
-                    ts.push(line_ts);
+                    ts.push((wc, line_ts));
                     self.row += 1;
                     return
                 },
@@ -120,11 +129,11 @@ impl<'a> Lexer<'a> {
             };
 
             let loc = Loc(self.file_path, self.row, col);
-            let t = Token::new(tt, loc, s);
+            let t = Token::new(wc, tt, loc, s);
             line_ts.push(t);
         }
 
-        ts.push(line_ts);
+        ts.push((wc, line_ts));
         self.row += 1;
     }
 
@@ -136,11 +145,12 @@ impl<'a> Lexer<'a> {
         Ok(ts)
     }
 
+    // List of characters by which we split lines in the `get_strs`
     const CHAR_LIST: &'static [char] = &[
         '=', '"', '\'', '#', '+', '-', '{', '}', ':', '@'
     ];
 
-    fn get_strs(input: &str) -> IntoIter::<ColStr> {
+    fn get_strs(input: &str) -> (usize, IntoIter::<ColStr>) {
         let (s, e, mut ret) = input.char_indices().fold((0, 0, Vec::with_capacity(input.len())),
             |(s, e, mut ret), (i, c)|
         {
@@ -164,6 +174,10 @@ impl<'a> Lexer<'a> {
             ret.push((s, &input[s..]));
         }
 
-        ret.into_iter()
+        let wc = input.chars()
+            .take_while(|x| x.is_whitespace())
+            .count();
+
+        (wc, ret.into_iter())
     }
 }
