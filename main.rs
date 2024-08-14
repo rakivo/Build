@@ -21,14 +21,8 @@ fn main() -> std::io::Result::<()> {
     let mut lexer = Lexer::new(file_path, &content);
     let tokens = lexer.lex()?;
 
-    // println!("{tokens:#?}");
-    // tokens.iter().for_each(|line| {
-    //     line.iter().for_each(|t| println!("{t}"));
-    //     println!();
-    // });
-
     let mut parser = Parser::new(&tokens);
-    parser.parse();
+    let _jobs = parser.parse();
 
     Ok(())
 }

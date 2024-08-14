@@ -1,10 +1,12 @@
-# comment
+; comment
 
-YAR=69 # and comment here
-FLAGS=-f 69
+CC=cc
+FLAGS=-g
+FOO=yarson.rs
+VAR=burson.c
 
-$FLAGS: main.c foo.c
-    $CC $FLAGS -o $@ $<
+#VAR: main.c foo.c
+    #CC #FLAGS -o $t $d
 
-$FOO: bar.c
-    $ejnrew
+#FOO: bar.c
+    #CC

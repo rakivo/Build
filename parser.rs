@@ -2,6 +2,7 @@ use crate::{
     ast::{
         Ast,
         Job,
+        Decl
     },
     lexer::{
         Token,
@@ -33,8 +34,8 @@ impl fmt::Display for ErrorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ErrorType::*;
         match self {
-            UnexpectedToken => write!(f, "Unexpected token"),
-            JobWithoutTarget => write!(f, "Job without a target"),
+            UnexpectedToken                   => write!(f, "Unexpected token"),
+            JobWithoutTarget                  => write!(f, "Job without a target"),
             ExpectedOnlyOneTokenOnTheLeftSide => write!(f, "Expected only one token on the left side")
         }
     }
@@ -96,8 +97,7 @@ impl<'a> Parser<'a> {
     #[track_caller]
     fn uft_err(&mut self, line: &'a Tokens) -> ! {
         self.err_token = line.get(0);
-        let err = Error::new(ErrorType::UnexpectedToken, None);
-        self.report_err(err)
+        self.report_err(Error::new(ErrorType::UnexpectedToken, None))
     }
 
     // To check token that we have only one token on the left side in these kinda situations:
@@ -113,21 +113,30 @@ impl<'a> Parser<'a> {
     fn check_token_pos(&mut self, pos: usize, token: Option::<&'a Token<'a>>) {
         if pos > 1 {
             self.err_token = token;
-            let err = Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None);
-            self.report_err(err);
+            self.report_err(Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None))
         }
     }
 
     fn parse_line(&mut self, _: &usize, line: &'a Tokens) {
-        use TokenType::*;
+        use {
+            ErrorType::*,
+            TokenType::*
+        };
 
         let mut iter = line.into_iter().peekable();
         let Some(first) = iter.peek() else { return };
         match first.typ {
+            // Found a variable declaration
             Literal => if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
                 self.check_token_pos(eq_idx, Some(first));
 
-            // Found a job
+                let left_side = first;
+                let right_side = &line[eq_idx + 1..];
+
+                let decl = Decl::new(left_side, right_side);
+                self.ast.decls.push(decl);
+
+            // Found a job declaration
             } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
                 self.check_token_pos(colon_idx, Some(first));
 
@@ -141,24 +150,24 @@ impl<'a> Parser<'a> {
                 }
 
                 let job = Job::new(target, dependencies, body);
-
-                println!("{job}");
                 self.ast.jobs.push(job);
             } else {
                 self.uft_err(line);
             },
             Colon => {
                 self.err_token = Some(first);
-                let err = Error::new(ErrorType::JobWithoutTarget, Some("Jobs without targets are not allowed in here!"));
+                let err = Error::new(JobWithoutTarget, Some("Jobs without targets are not allowed here!"));
                 self.report_err(err);
             }
             _ => self.uft_err(line)
         };
     }
 
-    pub fn parse(&mut self) {
+    pub fn parse(&mut self) -> Result::<crate::ast::Jobs, crate::ast::Error> {
         while let Some((wc, line)) = self.iter.next() {
             self.parse_line(wc, line);
         }
+
+        self.ast.parse()
     }
 }

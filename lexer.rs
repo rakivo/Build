@@ -74,7 +74,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    const COMMENT_SYMBOL: u8 = b'#';
+    const COMMENT_SYMBOL: u8 = b';';
 
     #[inline]
     pub fn new(file_path: &'a str, content: &'a str) -> Self {
@@ -107,7 +107,7 @@ impl<'a> Lexer<'a> {
             let tt = match first {
                 // Comment started, can happen if you do that:
                 // FLAGS=-f 69 # comment here
-                b'#'  => {
+                Self::COMMENT_SYMBOL  => {
                     ts.push((wc, line_ts));
                     self.row += 1;
                     return
@@ -129,8 +129,7 @@ impl<'a> Lexer<'a> {
             };
 
             let loc = Loc(self.file_path, self.row, col);
-            let t = Token::new(wc, tt, loc, s);
-            line_ts.push(t);
+            line_ts.push(Token::new(wc, tt, loc, s));
         }
 
         ts.push((wc, line_ts));
@@ -147,7 +146,12 @@ impl<'a> Lexer<'a> {
 
     // List of characters by which we split lines in the `get_strs`
     const CHAR_LIST: &'static [char] = &[
-        '=', '"', '\'', '#', '+', '-', '{', '}', ':', '@'
+        '=', '"', '\'', '{', '}', ':', '@', Self::COMMENT_SYMBOL as _
+    ];
+
+    // List of characters by which we split lines in the `get_strs`, but only if next character after the matched one is a whitespace
+    const SEMI_CHAR_LIST: &'static [char] = &[
+        '-', '+'
     ];
 
     fn get_strs(input: &str) -> (usize, IntoIter::<ColStr>) {
@@ -155,7 +159,10 @@ impl<'a> Lexer<'a> {
             |(s, e, mut ret), (i, c)|
         {
             let isw = c.is_whitespace();
-            if isw || Self::CHAR_LIST.contains(&c) {
+            if isw || Self::CHAR_LIST.contains(&c) || (
+                Self::SEMI_CHAR_LIST.contains(&c)
+             && matches!(input.chars().nth(i + 1), Some(c) if Self::SEMI_CHAR_LIST.contains(&c))
+            ) {
                 if s != i {
                     ret.push((s, &input[s..i]));
                 }
