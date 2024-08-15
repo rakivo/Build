@@ -1,15 +1,18 @@
 use crate::{
-    ast::{
-        Ast,
-        Job,
-        Decl
+    execution::cmd::Jobs,
+    parsing::{
+        ast::{
+            Ast,
+            Job,
+            Decl,
+        },
+        lexer::{
+            Token,
+            Tokens,
+            TokenType,
+            LinizedTokens,
+        }
     },
-    lexer::{
-        Token,
-        Tokens,
-        TokenType,
-        LinizedTokens,
-    }
 };
 
 use std::{
@@ -163,7 +166,7 @@ impl<'a> Parser<'a> {
         };
     }
 
-    pub fn parse(&mut self) -> Result::<crate::ast::Jobs, crate::ast::Error> {
+    pub fn parse(&mut self) -> Result::<Jobs, crate::parsing::ast::Error> {
         while let Some((wc, line)) = self.iter.next() {
             self.parse_line(wc, line);
         }

@@ -1,12 +1,10 @@
-; comment
-
 CC=cc
 FLAGS=-g
 FOO=yarson.rs
 VAR=burson.c
 
-#VAR: main.c foo.c
+#VAR: Cargo.lock target
     #CC #FLAGS -o $t $d
 
-#FOO: bar.c
+#FOO: README.md
     #CC

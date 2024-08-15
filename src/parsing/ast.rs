@@ -1,6 +1,10 @@
 use crate::{
-    lexer::{
-        Token,
+    execution::cmd::{
+        Jobs,
+        Job as CmdJob,
+    },
+    parsing::{
+        lexer::Token,
     }
 };
 
@@ -68,25 +72,6 @@ impl fmt::Display for Job<'_> {
     }
 }
 
-#[derive(Debug)]
-pub struct CmdJob {
-    target: String,
-    dependencies: Vec::<String>,
-    body: Vec::<Vec::<String>>,
-}
-
-impl CmdJob {
-    pub fn new(target: String,
-               dependencies: Vec::<String>,
-               body: Vec::<Vec::<String>>)
-        -> Self
-    {
-        Self { target, dependencies, body }
-    }
-}
-
-pub type Jobs = Vec::<CmdJob>;
-
 pub enum ErrorType {
     UndefinedVariable,
     UndefinedEnviromentVariable,
@@ -106,6 +91,12 @@ t variable"),
             UnexpectedTargetSpecialSymbolInTargetSection => write!(f, "Unexpected target special symbol in target section"),
             UnexpectedDependencySpecialSymbolWhileNoDependencies => write!(f, "Unexpected dependency special symbol while no dependencies"),
         }
+    }
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
     }
 }
 
@@ -136,12 +127,6 @@ impl fmt::Display for Error {
 }
 
 #[derive(Default)]
-struct CurrJob<'a> {
-    target: Option::<&'a String>,
-    dependencies: Option::<&'a Vec::<String>>,
-}
-
-#[derive(Default)]
 pub struct Ast<'a> {
     pub decls: Vec::<Decl<'a>>,
     pub jobs: Vec::<Job<'a>>,
@@ -151,6 +136,12 @@ enum ParsingSection {
     Target,
     Dependencies,
     Body,
+}
+
+#[derive(Default)]
+struct CurrJob<'a> {
+    target: Option::<&'a String>,
+    dependencies: Option::<&'a Vec::<String>>,
 }
 
 impl<'a> Ast<'a> {
@@ -204,7 +195,7 @@ impl<'a> Ast<'a> {
 
                     b't' | b'@' => if matches!(section, Target) {
                         self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection,
-                                                   Some("You can use \"$d\" and \"$<\" ONLY in body of job")), Some(token));
+                                                   Some("You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies")), Some(token));
                     } else if let Some(target) = curr_job.target {
                         target.to_owned()
                     } else {
@@ -225,30 +216,22 @@ impl<'a> Ast<'a> {
     pub fn parse(&mut self) -> Result::<Jobs, Error> {
         use ParsingSection::*;
 
-        let mut jobs = Jobs::new();
-        for job in self.jobs.iter() {
+        let jobs = self.jobs.iter().map(|job| {
             let mut curr_job = CurrJob::default();
             let target = self.get_value(job.target, Target, &curr_job);
             curr_job.target = Some(&target);
 
-            let mut deps = Vec::new();
-            for token in job.dependencies.iter() {
-                deps.push(self.get_value(token, Dependencies, &curr_job));
-            }
+            let deps = job.dependencies.iter()
+                .map(|t| self.get_value(t, Dependencies, &curr_job))
+                .collect::<Vec::<_>>();
+
             curr_job.dependencies = Some(&deps);
+            let body = job.body.iter().map(|line| {
+                line.iter().map(|t| self.get_value(t, Body, &curr_job)).collect::<Vec::<_>>()
+            }).collect::<Vec::<_>>();
 
-            let mut body = Vec::new();
-            for line in job.body.iter() {
-                let mut line_strs = Vec::new();
-                for token in line.iter() {
-                    line_strs.push(self.get_value(token, Body, &curr_job));
-                }
-                body.push(line_strs);
-            }
-
-            let job = CmdJob::new(target, deps, body);
-            jobs.push(job);
-        }
+            CmdJob::new(target, deps, body)
+        }).collect::<Vec::<_>>();
 
         Ok(jobs)
     }

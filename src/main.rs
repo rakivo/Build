@@ -1,9 +1,15 @@
-mod ast;
-mod parser;
-mod lexer;
+mod parsing;
+mod execution;
 
-use lexer::*;
-use parser::*;
+use {
+    parsing::{
+        lexer::Lexer,
+        parser::Parser
+    },
+    execution::{
+        cmd::Execute
+    }
+};
 
 use std::{
     env,
@@ -22,7 +28,10 @@ fn main() -> std::io::Result::<()> {
     let tokens = lexer.lex()?;
 
     let mut parser = Parser::new(&tokens);
-    let _jobs = parser.parse();
+    let jobs = parser.parse().unwrap();
+
+    let mut execute = Execute::new(jobs);
+    execute.execute()?;
 
     Ok(())
 }
