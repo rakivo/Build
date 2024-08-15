@@ -1,10 +1,8 @@
 use crate::{
+    parsing::lexer::Token,
     execution::cmd::{
         Jobs,
         Job as CmdJob,
-    },
-    parsing::{
-        lexer::Token,
     }
 };
 
@@ -19,6 +17,7 @@ pub struct Decl<'a> {
 }
 
 impl<'a> Decl<'a> {
+    #[inline]
     pub fn new(left_side: &'a Token<'a>,
                right_side: &'a [Token<'a>])
         -> Self
@@ -44,6 +43,7 @@ pub struct Job<'a> {
 }
 
 impl<'a> Job<'a> {
+    #[inline]
     pub fn new(target: &'a Token<'a>,
                dependencies: &'a [Token<'a>],
                body: Vec::<&'a Vec::<Token<'a>>>)
@@ -74,6 +74,7 @@ impl fmt::Display for Job<'_> {
 
 pub enum ErrorType {
     UndefinedVariable,
+    JobDependsOnItself,
     UndefinedEnviromentVariable,
     UnexpectedDependencySpecialSymbolNotInBody,
     UnexpectedTargetSpecialSymbolInTargetSection,
@@ -85,8 +86,8 @@ impl fmt::Display for ErrorType {
         use ErrorType::*;
         match self {
             UndefinedVariable => write!(f, "Undefined variable"),
-            UndefinedEnviromentVariable => write!(f, "Undefined enviromen
-t variable"),
+            JobDependsOnItself => write!(f, "Job depends on itself"),
+            UndefinedEnviromentVariable => write!(f, "Undefined enviroment variable"),
             UnexpectedDependencySpecialSymbolNotInBody => write!(f, "Unexpected dependency special symbol in dependencies section"),
             UnexpectedTargetSpecialSymbolInTargetSection => write!(f, "Unexpected target special symbol in target section"),
             UnexpectedDependencySpecialSymbolWhileNoDependencies => write!(f, "Unexpected dependency special symbol while no dependencies"),
@@ -214,16 +215,28 @@ impl<'a> Ast<'a> {
     }
 
     pub fn parse(&mut self) -> Result::<Jobs, Error> {
-        use ParsingSection::*;
+        use {
+            ErrorType::*,
+            ParsingSection::*
+        };
 
         let jobs = self.jobs.iter().map(|job| {
             let mut curr_job = CurrJob::default();
             let target = self.get_value(job.target, Target, &curr_job);
             curr_job.target = Some(&target);
 
-            let deps = job.dependencies.iter()
-                .map(|t| self.get_value(t, Dependencies, &curr_job))
-                .collect::<Vec::<_>>();
+            let deps = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
+                |mut deps, t|
+            {
+                let value = self.get_value(t, Dependencies, &curr_job);
+                if target.eq(&value) {
+                    let err = Error::new(JobDependsOnItself, None);
+                    panic!("{t}: [ERROR] {err}\n\tNOTE: Job \"{job}\" depends on itself, so, infinite recursion detected", job = target)
+                }
+
+                deps.push(value);
+                deps
+            });
 
             curr_job.dependencies = Some(&deps);
             let body = job.body.iter().map(|line| {

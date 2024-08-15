@@ -8,7 +8,6 @@ use std::{
     },
 };
 
-#[derive(Debug)]
 pub struct Job {
     target: String,
     dependencies: Vec::<String>,
@@ -16,6 +15,7 @@ pub struct Job {
 }
 
 impl Job {
+    #[inline]
     pub fn new(target: String,
                dependencies: Vec::<String>,
                body: Vec::<Vec::<String>>)
@@ -57,17 +57,16 @@ impl Execute {
     }
 
     fn needs_rebuild(&self, job: &Job) -> bool {
-        let mut times = Vec::with_capacity(job.dependencies.len());
-        for dep in job.dependencies.iter() {
-            if job.target.eq(dep) {
-                eprintln!("Job \"{job}\" depends on itself, so, infinite recursion detected", job = job.target);
-                exit(1);
-            } else if let Some(job) = self.jobs.iter().find(|j| j.target.eq(dep)) {
+        let times = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
+            |mut times, dep|
+        {
+            // If current job depends on other job, the other job will be executed, recursively.
+            if let Some(job) = self.jobs.iter().find(|j| j.target.eq(dep)) {
                 self.execute_job_if_needed(job);
             } else {
                 times.push(Self::get_last_modification_time(dep).unwrap());
-            }
-        }
+            } times
+        });
 
         if !Self::path_exists(&job.target) { return true }
 
