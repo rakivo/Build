@@ -1,10 +1,12 @@
 CC=cc
 FLAGS=-g
-FOO=yarson.rs
 VAR=burson.c
+FOO=yarson.rs
 
-#VAR: Cargo.lock target
+all: bar
+
+out: test.c
     #CC #FLAGS -o $t $d
 
-#FOO: README.md
-    #CC
+bar: out
+    echo "hello"

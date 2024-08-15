@@ -146,12 +146,12 @@ impl<'a> Lexer<'a> {
 
     // List of characters by which we split lines in the `get_strs`
     const CHAR_LIST: &'static [char] = &[
-        '=', '"', '\'', '{', '}', ':', '@', Self::COMMENT_SYMBOL as _
+        '=', '{', '}', ':', '@', Self::COMMENT_SYMBOL as _
     ];
 
     // List of characters by which we split lines in the `get_strs`, but only if next character after the matched one is a whitespace
     const SEMI_CHAR_LIST: &'static [char] = &[
-        '-', '+'
+        '-', '+', '"', '\''
     ];
 
     fn get_strs(input: &str) -> (usize, IntoIter::<ColStr>) {
@@ -159,10 +159,12 @@ impl<'a> Lexer<'a> {
             |(s, e, mut ret), (i, c)|
         {
             let isw = c.is_whitespace();
-            if isw || Self::CHAR_LIST.contains(&c) || (
+            if isw || Self::CHAR_LIST.contains(&c) || {
                 Self::SEMI_CHAR_LIST.contains(&c)
-             && matches!(input.chars().nth(i + 1), Some(c) if Self::SEMI_CHAR_LIST.contains(&c))
-            ) {
+                && matches! {
+                    input.chars().nth(i + 1), Some(c) if Self::SEMI_CHAR_LIST.contains(&c)
+                }
+            } {
                 if s != i {
                     ret.push((s, &input[s..i]));
                 }

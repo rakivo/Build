@@ -1,9 +1,11 @@
 use std::{
-    fs::{
-        metadata,
-    },
+    fs::metadata,
     path::PathBuf,
     time::SystemTime,
+    process::{
+        exit,
+        Command
+    },
 };
 
 #[derive(Debug)]
@@ -52,27 +54,71 @@ impl Execute {
         })?.modified()
     }
 
-    fn needs_rebuild_many(bin: &str, srcs: &Vec::<String>) -> std::io::Result::<bool> {
-        // I collect times on purpose to check if all of the src files exist,
-        // to catch unexisting dependencies at `compile time` whether the bin path exists or not.
-
-        let mut times = Vec::new();
+    fn needs_rebuild_many(&self, bin: &str, srcs: &Vec::<String>) -> bool {
+        let mut times = Vec::with_capacity(srcs.len());
         for src in srcs.iter() {
-            let time = Self::get_last_modification_time(src)?;
-            times.push(time)
+            if let Some(job) = self.jobs.iter().find(|j| j.target.eq(src)) {
+                if self.needs_rebuild_many(&job.target, &job.dependencies) {
+                    self.execute_job(job);
+                } else {
+                    println!("Nothing to do for \"{job}\"", job = job.target);
+                }
+            } else {
+                times.push(Self::get_last_modification_time(src).unwrap());
+            }
         }
 
-        if !Self::path_exists(bin) { return Ok(true) }
+        if !Self::path_exists(bin) { return true }
 
-        let bin_mod_time = Self::get_last_modification_time(bin)?;
-        Ok(times.into_iter().any(|src_mod_time| src_mod_time > bin_mod_time))
+        let bin_mod_time = Self::get_last_modification_time(bin).unwrap();
+        times.into_iter().any(|src_mod_time| src_mod_time > bin_mod_time)
+    }
+
+    #[inline]
+    fn render_cmd(cmd: &Vec::<String>) -> String {
+        cmd.join(" ")
+    }
+
+    pub const CMD_ARG:  &'static str = if cfg!(windows) {"cmd"} else {"sh"};
+    pub const CMD_ARG2: &'static str = if cfg!(windows) {"/C"} else {"-c"};
+
+    fn execute_job(&self, job: &Job) {
+        for line in job.body.iter() {
+            let rendered = Self::render_cmd(line);
+            println!("{rendered}");
+
+            let out = Command::new(Self::CMD_ARG).arg(Self::CMD_ARG2)
+                .arg(rendered)
+                .output()
+                .expect("Failed to execute process");
+
+            if let Some(code) = out.status.code() {
+                if code != 0 {
+                    if !out.stderr.is_empty() {
+                        eprint!("{stderr}", stderr = String::from_utf8_lossy(&out.stderr));
+                    }
+                    eprintln!("Process exited abnormally with code {code}");
+                    exit(1);
+                }
+            }
+
+            if !out.stdout.is_empty() {
+                eprint!("{stdout}", stdout = String::from_utf8_lossy(&out.stdout));
+            }
+        }
     }
 
     pub fn execute(&mut self) -> std::io::Result::<()> {
-        for job in self.jobs.iter() {
-            if Self::needs_rebuild_many(&job.target, &job.dependencies)? {
-                println!("{}", job.target);
-            }
+        let job = if let Some(j) = self.jobs.iter().find(|job| job.target.eq("all")) {
+            j
+        } else if let Some(j) = self.jobs.first() {
+            j
+        } else { return Ok(()) };
+
+        if self.needs_rebuild_many(&job.target, &job.dependencies) {
+            self.execute_job(job);
+        } else {
+            println!("Nothing to do for \"{job}\"", job = job.target);
         }
 
         Ok(())
