@@ -12,8 +12,7 @@ use std::{
 pub struct Job {
     target: String,
     dependencies: Vec::<String>,
-    #[allow(unused)]
-    body: Vec::<Vec::<String>>,
+    body: Vec::<Vec::<String>>
 }
 
 impl Job {
