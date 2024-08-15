@@ -39,30 +39,29 @@ impl Execute {
     }
 
     #[inline]
-    fn path_exists<P>(p: P) -> bool
-    where
-        P: Into::<PathBuf>
-    {
-        p.into().exists()
+    fn path_exists(p: &str) -> bool {
+        let p: PathBuf = p.into();
+        p.exists()
     }
 
     #[inline]
-    fn get_last_modification_time<'a>(s: &str) -> std::io::Result::<SystemTime> {
+    fn get_last_modification_time(s: &str) -> std::io::Result::<SystemTime> {
         metadata::<PathBuf>(s.into()).map_err(|err| {
             eprintln!("[ERROR] Failed to get last modification time of \"{s}\", apparently it does not exist");
             err
         })?.modified()
     }
 
+    #[inline]
+    fn nothing_to_do_for(what: &str) {
+        println!("Nothing to do for \"{what}\"");
+    }
+
     fn needs_rebuild_many(&self, bin: &str, srcs: &Vec::<String>) -> bool {
         let mut times = Vec::with_capacity(srcs.len());
         for src in srcs.iter() {
             if let Some(job) = self.jobs.iter().find(|j| j.target.eq(src)) {
-                if self.needs_rebuild_many(&job.target, &job.dependencies) {
-                    self.execute_job(job);
-                } else {
-                    println!("Nothing to do for \"{job}\"", job = job.target);
-                }
+                self.execute_job_if_needed(job);
             } else {
                 times.push(Self::get_last_modification_time(src).unwrap());
             }
@@ -82,43 +81,40 @@ impl Execute {
     pub const CMD_ARG:  &'static str = if cfg!(windows) {"cmd"} else {"sh"};
     pub const CMD_ARG2: &'static str = if cfg!(windows) {"/C"} else {"-c"};
 
-    fn execute_job(&self, job: &Job) {
-        for line in job.body.iter() {
-            let rendered = Self::render_cmd(line);
-            println!("{rendered}");
+    fn execute_job_if_needed(&self, job: &Job) {
+        if self.needs_rebuild_many(&job.target, &job.dependencies) {
+            for line in job.body.iter() {
+                let rendered = Self::render_cmd(line);
+                println!("{rendered}");
 
-            let out = Command::new(Self::CMD_ARG).arg(Self::CMD_ARG2)
-                .arg(rendered)
-                .output()
-                .expect("Failed to execute process");
+                let out = Command::new(Self::CMD_ARG).arg(Self::CMD_ARG2)
+                    .arg(rendered)
+                    .output()
+                    .expect("Failed to execute process");
 
-            if let Some(code) = out.status.code() {
-                if code != 0 {
-                    if !out.stderr.is_empty() {
-                        eprint!("{stderr}", stderr = String::from_utf8_lossy(&out.stderr));
+                if let Some(code) = out.status.code() {
+                    if code != 0 {
+                        if !out.stderr.is_empty() {
+                            eprint!("{stderr}", stderr = String::from_utf8_lossy(&out.stderr));
+                        }
+
+                        eprintln!("Process exited abnormally with code {code}");
+                        exit(1);
                     }
-                    eprintln!("Process exited abnormally with code {code}");
-                    exit(1);
+                }
+
+                if !out.stdout.is_empty() {
+                    eprint!("{stdout}", stdout = String::from_utf8_lossy(&out.stdout));
                 }
             }
-
-            if !out.stdout.is_empty() {
-                eprint!("{stdout}", stdout = String::from_utf8_lossy(&out.stdout));
-            }
+        } else {
+            Self::nothing_to_do_for(&job.target);
         }
     }
 
     pub fn execute(&mut self) -> std::io::Result::<()> {
-        let job = self.jobs.first()
-            .ok_or_else(|| exit(0))
-            .unwrap();
-
-        if self.needs_rebuild_many(&job.target, &job.dependencies) {
-            self.execute_job(job);
-        } else {
-            println!("Nothing to do for \"{job}\"", job = job.target);
-        }
-
+        let job = self.jobs.first().unwrap_or_else(|| exit(0));
+        self.execute_job_if_needed(job);
         Ok(())
     }
 }
