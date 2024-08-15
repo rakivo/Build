@@ -3,10 +3,10 @@ FLAGS=-g
 VAR=burson.c
 FOO=yarson.rs
 
-all: bar
-
 out: test.c
     #CC #FLAGS -o $t $d
 
 bar: out
     echo "hello"
+
+all:

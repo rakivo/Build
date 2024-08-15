@@ -109,11 +109,9 @@ impl Execute {
     }
 
     pub fn execute(&mut self) -> std::io::Result::<()> {
-        let job = if let Some(j) = self.jobs.iter().find(|job| job.target.eq("all")) {
-            j
-        } else if let Some(j) = self.jobs.first() {
-            j
-        } else { return Ok(()) };
+        let job = self.jobs.first()
+            .ok_or_else(|| exit(0))
+            .unwrap();
 
         if self.needs_rebuild_many(&job.target, &job.dependencies) {
             self.execute_job(job);
