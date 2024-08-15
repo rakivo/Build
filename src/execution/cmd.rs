@@ -57,20 +57,23 @@ impl Execute {
         println!("Nothing to do for \"{what}\"");
     }
 
-    fn needs_rebuild_many(&self, bin: &str, srcs: &Vec::<String>) -> bool {
-        let mut times = Vec::with_capacity(srcs.len());
-        for src in srcs.iter() {
-            if let Some(job) = self.jobs.iter().find(|j| j.target.eq(src)) {
+    fn needs_rebuild(&self, job: &Job) -> bool {
+        let mut times = Vec::with_capacity(job.dependencies.len());
+        for dep in job.dependencies.iter() {
+            if job.target.eq(dep) {
+                eprintln!("Job \"{job}\" depends on itself, so, infinite recursion detected", job = job.target);
+                exit(1);
+            } else if let Some(job) = self.jobs.iter().find(|j| j.target.eq(dep)) {
                 self.execute_job_if_needed(job);
             } else {
-                times.push(Self::get_last_modification_time(src).unwrap());
+                times.push(Self::get_last_modification_time(dep).unwrap());
             }
         }
 
-        if !Self::path_exists(bin) { return true }
+        if !Self::path_exists(&job.target) { return true }
 
-        let bin_mod_time = Self::get_last_modification_time(bin).unwrap();
-        times.into_iter().any(|src_mod_time| src_mod_time > bin_mod_time)
+        let target_mod_time = Self::get_last_modification_time(&job.target).unwrap();
+        times.into_iter().any(|dep_mod_time| dep_mod_time > target_mod_time)
     }
 
     #[inline]
@@ -82,7 +85,7 @@ impl Execute {
     pub const CMD_ARG2: &'static str = if cfg!(windows) {"/C"} else {"-c"};
 
     fn execute_job_if_needed(&self, job: &Job) {
-        if self.needs_rebuild_many(&job.target, &job.dependencies) {
+        if self.needs_rebuild(&job) {
             for line in job.body.iter() {
                 let rendered = Self::render_cmd(line);
                 println!("{rendered}");
