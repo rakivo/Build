@@ -1,12 +1,18 @@
 use std::{
-    fs::metadata,
+    env,
     path::PathBuf,
     time::SystemTime,
+    fs::{
+        read_dir,
+        metadata,
+    },
     process::{
         exit,
         Command
     },
 };
+
+use crate::execution::flags::Flags;
 
 pub struct Job {
     target: String,
@@ -25,16 +31,59 @@ impl Job {
     }
 }
 
+#[derive(Debug)]
+pub struct Dir {
+    paths: Vec::<PathBuf>,
+}
+
+impl Dir {
+    pub fn new(root: PathBuf) -> Dir {
+        Dir {
+            paths: if let Ok(entries) = read_dir::<PathBuf>(root) {
+                entries.into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|e| e.path().is_file())
+                    .map(|e| e.path())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+impl IntoIterator for Dir {
+    type Item = PathBuf;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.paths.into_iter()
+    }
+}
+
+pub fn find_rakefile() -> std::io::Result::<PathBuf> {
+    let dir_path = env::current_dir()?;
+    let buildfile = Dir::new(dir_path.to_owned()).into_iter()
+        .find(|f| matches!(f.file_name(), Some(name) if name == "Build"))
+        .unwrap_or_else(|| {
+            eprintln!("No `Build` found in {dir}", dir = dir_path.display());
+            exit(1);
+        });
+
+    Ok(buildfile)
+}
+
 pub type Jobs = Vec::<Job>;
 
 pub struct Execute {
     jobs: Jobs,
+    flags: Flags,
 }
 
 impl Execute {
     #[inline]
-    pub fn new(jobs: Jobs) -> Self {
-        Self { jobs }
+    pub fn new(jobs: Jobs, flags: Flags) -> Self {
+        Self { jobs, flags }
     }
 
     #[inline]
@@ -57,6 +106,8 @@ impl Execute {
     }
 
     fn needs_rebuild(&self, job: &Job) -> bool {
+        if self.flags.phony { return true }
+
         let times = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
             |mut times, dep|
         {
@@ -114,7 +165,15 @@ impl Execute {
     }
 
     pub fn execute(&mut self) -> std::io::Result::<()> {
-        let job = self.jobs.first().unwrap_or_else(|| exit(0));
+        let job = if let Some(job_target) = self.flags.job.as_ref() {
+            self.jobs.iter().find(|j| j.target.eq(job_target)).unwrap_or_else(|| {
+                eprintln!("No job with target \"{job_target}\" found");
+                exit(1)
+            })
+        } else {
+            self.jobs.first().unwrap_or_else(|| exit(0))
+        };
+
         self.execute_job_if_needed(job);
         Ok(())
     }

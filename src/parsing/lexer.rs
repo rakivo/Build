@@ -1,6 +1,7 @@
 use std::{
     fmt,
     str,
+    path::PathBuf,
     vec::IntoIter,
     iter::{
         Peekable,
@@ -33,11 +34,11 @@ pub enum TokenType {
     Colon,
 }
 
-pub struct Loc<'a>(pub &'a str, pub usize, pub usize);
+pub struct Loc<'a>(pub &'a PathBuf, pub usize, pub usize);
 
 impl fmt::Display for Loc<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{f}:{r}:{c}", f = self.0, r = self.1 + 1, c = self.2 + 1)
+        write!(f, "{f}:{r}:{c}", f = self.0.display(), r = self.1 + 1, c = self.2 + 1)
     }
 }
 
@@ -70,14 +71,14 @@ impl<'a> Token<'a> {
 pub struct Lexer<'a> {
     row: usize,
     iter: Lines<'a>,
-    file_path: &'a str
+    file_path: &'a PathBuf
 }
 
 impl<'a> Lexer<'a> {
     const COMMENT_SYMBOL: u8 = b';';
 
     #[inline]
-    pub fn new(file_path: &'a str, content: &'a str) -> Self {
+    pub fn new(file_path: &'a PathBuf, content: &'a str) -> Self {
         Self { file_path, row: 0, iter: content.lines().enumerate().peekable() }
     }
 

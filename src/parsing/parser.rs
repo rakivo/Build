@@ -170,7 +170,6 @@ impl<'a> Parser<'a> {
         while let Some((wc, line)) = self.iter.next() {
             self.parse_line(wc, line);
         }
-
         self.ast.parse()
     }
 }

@@ -3,7 +3,7 @@ FLAGS=-g
 VAR=burson.c
 FOO=yarson.rs
 
-out: test.c out
+out: test.c
     #CC #FLAGS -o $t $d
 
 bar: out
