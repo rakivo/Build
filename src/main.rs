@@ -10,7 +10,7 @@ use execution::{
     flags::parse_flags,
     cmd::{
         Execute,
-        find_rakefile
+        find_buildfile
     },
 };
 
@@ -30,7 +30,7 @@ fn main() -> std::io::Result::<()> {
         }
     }
 
-    let file_path = find_rakefile()?;
+    let file_path = find_buildfile()?;
     let content = read_to_string(&file_path)?;
     let mut lexer = Lexer::new(&file_path, &content);
     let tokens = lexer.lex()?;

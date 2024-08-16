@@ -61,7 +61,7 @@ impl IntoIterator for Dir {
     }
 }
 
-pub fn find_rakefile() -> std::io::Result::<PathBuf> {
+pub fn find_buildfile() -> std::io::Result::<PathBuf> {
     let dir_path = env::current_dir()?;
     let buildfile = Dir::new(dir_path.to_owned()).into_iter()
         .find(|f| matches!(f.file_name(), Some(name) if name == "Build"))
