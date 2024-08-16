@@ -8,7 +8,8 @@ use crate::{
 
 use std::{
     env,
-    fmt
+    fmt,
+    process::exit
 };
 
 pub struct Decl<'a> {
@@ -231,7 +232,8 @@ impl<'a> Ast<'a> {
                 let value = self.get_value(t, Dependencies, &curr_job);
                 if target.eq(&value) {
                     let err = Error::new(JobDependsOnItself, None);
-                    panic!("{t}: [ERROR] {err}\n\tNOTE: Job \"{job}\" depends on itself, so, infinite recursion detected", job = target)
+                    eprintln!("{t}: [ERROR] {err}\n\tNOTE: Job \"{target}\" depends on itself, so, infinite recursion detected");
+                    exit(1)
                 }
 
                 deps.push(value);
@@ -245,6 +247,23 @@ impl<'a> Ast<'a> {
 
             CmdJob::new(target, deps, body)
         }).collect::<Vec::<_>>();
+
+        // Complexity: O(J^2 * D)
+        // Where: J is the number of jobs, and
+        //        D is the average number of dependencies per job.
+        jobs.iter().for_each(|job| {
+            // Iterate over job's dependencies and check which ones are jobs and not just files
+            job.dependencies.iter().filter_map(|dep| {
+                jobs.iter().find(|j| j.target.eq(dep))
+            }).for_each(|j| {
+                j.dependencies.iter().for_each(|dep| {
+                    if dep.eq(&job.target) {
+                        eprintln!("[ERROR] Infinite dependency cycle detected in \"{job}\", specifically \"{dep}\" dependency, aborting..", job = j.target);
+                        exit(1);
+                    }
+                })
+            });
+        });
 
         Ok(jobs)
     }

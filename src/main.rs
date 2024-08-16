@@ -1,11 +1,10 @@
 mod parsing;
-mod execution;
-
 use parsing::{
     lexer::Lexer,
     parser::Parser
 };
 
+mod execution;
 use execution::{
     flags::parse_flags,
     cmd::{
@@ -19,6 +18,7 @@ use std::{
     process::exit,
     fs::read_to_string
 };
+
 
 fn main() -> std::io::Result::<()> {
     let flags = parse_flags();

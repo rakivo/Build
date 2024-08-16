@@ -14,9 +14,10 @@ use std::{
 
 use crate::execution::flags::Flags;
 
+#[derive(Debug)]
 pub struct Job {
-    target: String,
-    dependencies: Vec::<String>,
+    pub target: String,
+    pub dependencies: Vec::<String>,
     body: Vec::<Vec::<String>>
 }
 
@@ -106,7 +107,16 @@ impl Execute {
     }
 
     fn needs_rebuild(&self, job: &Job) -> bool {
-        if self.flags.phony { return true }
+        // If phony flag: `-B` is passed, we need to rebuild everything and only after that return true
+        if self.flags.phony {
+            job.dependencies.iter().for_each(|dep| {
+                if let Some(job) = self.jobs.iter().find(|j| j.target.eq(dep)) {
+                    self.execute_job_if_needed(job);
+                }
+            });
+
+            return true
+        }
 
         let times = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
             |mut times, dep|
@@ -137,7 +147,9 @@ impl Execute {
         if self.needs_rebuild(&job) {
             for line in job.body.iter() {
                 let rendered = Self::render_cmd(line);
-                println!("{rendered}");
+                if !self.flags.silent {
+                    println!("{rendered}");
+                }
 
                 let out = Command::new(Self::CMD_ARG).arg(Self::CMD_ARG2)
                     .arg(rendered)
@@ -151,7 +163,7 @@ impl Execute {
                         }
 
                         eprintln!("Process exited abnormally with code {code}");
-                        exit(1);
+                        if !self.flags.keepgoing { exit(1) }
                     }
                 }
 

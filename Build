@@ -3,10 +3,13 @@ FLAGS=-g
 VAR=burson.c
 FOO=yarson.rs
 
-out: test.c
+out: test.c bar
     #CC #FLAGS -o $t $d
 
-bar: out
-    echo "hello"
+foo: test.c
+    echo "foo"
+
+bar: foo
+    echo "bar"
 
 all:

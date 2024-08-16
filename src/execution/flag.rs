@@ -1,4 +1,4 @@
-//! # Flager: Lightweight command Line Argument Parser
+// This is a crate developed by me: <https://github.com/rakivo/flag>
 
 use std::{
     env,
