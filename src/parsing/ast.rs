@@ -1,5 +1,8 @@
 use crate::{
-    parsing::lexer::Token,
+    parsing::lexer::{
+        Token,
+        Tokens
+    },
     execution::cmd::{
         Jobs,
         Job as CmdJob,
@@ -9,12 +12,13 @@ use crate::{
 use std::{
     env,
     fmt,
-    process::exit
+    process::exit,
+    collections::{HashMap, HashSet}
 };
 
 pub struct Decl<'a> {
-    left_side: &'a Token<'a>,
-    right_side: &'a [Token<'a>],
+    pub left_side: &'a Token<'a>,
+    pub right_side: &'a [Token<'a>],
 }
 
 impl<'a> Decl<'a> {
@@ -37,10 +41,37 @@ impl fmt::Display for Decl<'_> {
     }
 }
 
+#[derive(Debug)]
+pub enum Operation {
+    Plus,
+    PlusEqual,
+
+    Minus,
+    MinusEqual,
+}
+
+#[derive(Debug)]
+pub struct Expr<'a> {
+    pub left_side: String,
+    pub operation: Operation,
+    pub right_side: Token<'a>,
+}
+
+impl<'a> Expr<'a> {
+    #[inline]
+    pub fn new(left_side: String,
+               operation: Operation,
+               right_side: Token<'a>)
+        -> Self
+    {
+        Self { left_side, operation, right_side }
+    }
+}
+
 pub struct Job<'a> {
     target: &'a Token<'a>,
     dependencies: &'a [Token<'a>],
-    body: Vec::<&'a Vec::<Token<'a>>>
+    body: Vec::<&'a Tokens<'a>>
 }
 
 impl<'a> Job<'a> {
@@ -131,6 +162,7 @@ impl fmt::Display for Error {
 #[derive(Default)]
 pub struct Ast<'a> {
     pub decls: Vec::<Decl<'a>>,
+    pub exprs: Vec::<Expr<'a>>,
     pub jobs: Vec::<Job<'a>>,
 }
 
@@ -215,6 +247,44 @@ impl<'a> Ast<'a> {
         }
     }
 
+    fn detect_cycle(jobs: &Jobs) -> bool {
+        let mut visited = HashSet::with_capacity(jobs.len());
+        let mut in_rec_stack = HashSet::with_capacity(jobs.len());
+        let job_map = HashMap::from_iter(jobs.iter().map(|job| (job.target.as_str(), job)).into_iter());
+
+        fn dfs<'a>(job_target: &'a str,
+                   job_map: &HashMap::<&'a str, &'a CmdJob>,
+                   visited: &mut HashSet::<&'a str>,
+                   in_rec_stack: &mut HashSet::<&'a str>)
+                   -> bool
+        {
+            if in_rec_stack.contains(job_target) { return true }
+            if visited.contains(job_target) { return false }
+
+            visited.insert(job_target);
+            in_rec_stack.insert(job_target);
+
+            if let Some(job) = job_map.get(job_target) {
+                if job.dependencies.iter().any(|dep| dfs(dep, job_map, visited, in_rec_stack)) {
+                    return true
+                }
+            }
+
+            in_rec_stack.remove(job_target);
+            false
+        }
+
+        for job in job_map.values() {
+            if !visited.contains(job.target.as_str())
+            && dfs(job.target.as_str(), &job_map, &mut visited, &mut in_rec_stack)
+            {
+                return true
+            }
+        }
+
+        false
+    }
+
     pub fn parse(&mut self) -> Result::<Jobs, Error> {
         use {
             ErrorType::*,
@@ -248,22 +318,10 @@ impl<'a> Ast<'a> {
             CmdJob::new(target, deps, body)
         }).collect::<Vec::<_>>();
 
-        // Complexity: O(J^2 * D)
-        // Where: J is the number of jobs, and
-        //        D is the average number of dependencies per job.
-        jobs.iter().for_each(|job| {
-            // Iterate over job's dependencies and check which ones are jobs and not just files
-            job.dependencies.iter().filter_map(|dep| {
-                jobs.iter().find(|j| j.target.eq(dep))
-            }).for_each(|j| {
-                j.dependencies.iter().for_each(|dep| {
-                    if dep.eq(&job.target) {
-                        eprintln!("[ERROR] Infinite dependency cycle detected in \"{job}\", specifically \"{dep}\" dependency, aborting..", job = j.target);
-                        exit(1);
-                    }
-                })
-            });
-        });
+        if Self::detect_cycle(&jobs) {
+            eprintln!("[ERROR] Infinite dependency cycle detected, aborting..");
+            exit(1);
+        }
 
         Ok(jobs)
     }
