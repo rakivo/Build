@@ -5,7 +5,12 @@ FOO=yarson.rs
 
 #FOO+=#VAR
 
-ifneq #FOO, #FOO
+ifeq #FOO, #FOO
+    ifeq 1, 2
+        BAR=YAR
+    else
+        BAR=HELLO
+    endif
     #FOO+=BRATIK
 else
     BAR=BRATIK

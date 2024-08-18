@@ -23,6 +23,7 @@ const IFS: &'static [&'static str] = &[
 ];
 
 pub enum ErrorType {
+    #[allow(unused)]
     NoClosingEndif,
     UnexpectedToken,
     JobWithoutTarget,
@@ -160,6 +161,59 @@ impl<'a> Parser<'a> {
         Item::Decl(decl)
     }
 
+    fn parse_if(first: &Token, iter: &mut Peekable<Iter<'a, Token>>, iter2: &mut LinizedTokensIterator<'a>) -> Item<'a> {
+        let mut endif = false;
+        let mut body = Vec::new();
+        let (mut else_body, mut else_flag) = (Vec::new(), false);
+
+        while let Some((_, line)) = iter2.next() {
+            if line.iter().find(|t| t.str.eq("else")).is_some() {
+                else_flag = true;
+            } else {
+                if line.iter().any(|t| t.str.eq("endif")) {
+                    endif = true;
+                    break
+                }
+
+                let Some(first) = line.first() else { continue };
+                let item = if IFS.contains(&first.str) {
+                    let mut iter = line.into_iter().peekable();
+                    Self::parse_if(first, &mut iter, iter2)
+                } else {
+                    let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, TokenType::Equal)) else { continue };
+                    let Some(first) = line.get(eq_idx - 1) else { continue };
+                    Self::parse_eq(first, line, eq_idx)
+                };
+
+                if else_flag {
+                    else_body.push(item);
+                } else {
+                    body.push(item);
+                }
+            }
+        }
+
+        if !endif {
+            panic!("No closing endif")
+            // self.err_token = Some(first);
+            // self.report_err(Error::new(NoClosingEndif, None));
+        }
+
+        let rev = if first.str.eq("ifeq") { false } else { true };
+
+        // Skip the if keyword
+        iter.next();
+        let Some(left_side) = iter.next() else {
+            panic!("No left_side")
+        };
+        let Some(right_side) = iter.next() else {
+            panic!("No right_side")
+        };
+
+        let r#if = If::new(rev, left_side, right_side, body, else_body);
+        Item::If(r#if)
+    }
+
     fn parse_line(&mut self, _: &usize, line: &'a Tokens) {
         use {
             ErrorType::*,
@@ -171,49 +225,8 @@ impl<'a> Parser<'a> {
         if first.str.eq("endif") { return };
         match first.typ {
             Literal => if IFS.contains(&first.str) {
-                let mut endif = false;
-                let mut body = Vec::new();
-                let (mut else_body, mut else_flag) = (Vec::new(), false);
-                while let Some((_, line)) = self.iter.next() {
-                    if line.iter().find(|t| t.str.eq("else")).is_some() {
-                        else_flag = true;
-                    } else {
-                        if line.iter().any(|t| t.str.eq("endif")) {
-                            endif = true;
-                            break
-                        }
-
-                        let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) else { continue };
-                        let Some(first) = line.get(eq_idx - 1) else { continue };
-                        let item = Self::parse_eq(first, line, eq_idx);
-                        if else_flag {
-                            else_body.push(item);
-                        } else {
-                            body.push(item);
-                        }
-                    }
-                }
-
-                if !endif {
-                    self.err_token = Some(first);
-                    self.report_err(Error::new(NoClosingEndif, None));
-                }
-
-                let rev = if first.str.eq("ifeq") { false } else { true };
-
-                // Skip the if keyword
-                iter.next();
-
-                let Some(left_side) = iter.next() else {
-                    panic!("If without a left_side")
-                };
-
-                let Some(right_side) = iter.next() else {
-                    panic!("If without a right_side")
-                };
-
-                let r#if = If::new(rev, left_side, right_side, body, else_body);
-                self.ast.items.push(Item::If(r#if));
+                let item = Self::parse_if(first, &mut iter, &mut self.iter);
+                self.ast.items.push(item);
             } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
                 let item = Self::parse_eq(first, line, eq_idx);
                 self.ast.items.push(item);

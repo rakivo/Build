@@ -337,6 +337,8 @@ impl<'a> Ast<'a> {
             } else {
                 self.report_err(Error::new(UndefinedVariable, None), Some(token))
             }
+        } else if token.str.ends_with(",") {
+            token.str[..token.str.len() - 1].to_owned()
         } else {
             token.str.to_owned()
         }
@@ -404,6 +406,37 @@ impl<'a> Ast<'a> {
         }
     }
 
+    fn process_if_tokens(&mut self, items: Vec::<Item<'a>>) {
+        for item in items.into_iter() {
+            match item {
+                Item::If(r#if) => {
+                    self.process_if_tokens(self.parse_if(r#if));
+                },
+                Item::Decl(decl) => {
+                    self.eval_decl(&decl);
+                },
+                Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
+                    self.parse_expr(&expr);
+                } else {
+                    panic!("In-place math expressions are not supported yet BRUH")
+                },
+                _ => todo!()
+            }
+        }
+    }
+
+    fn parse_if(&self, r#if: If<'a>) -> Vec::<Item<'a>> {
+        let lv = self.get_value_(r#if.left_side);
+        let rv = self.get_value_(r#if.right_side);
+        let mut bool = lv.eq(&rv);
+        if r#if.rev { bool = !bool; };
+        if bool {
+            r#if.body
+        } else {
+            r#if.else_body
+        }
+    }
+
     pub fn parse(&mut self) -> Result::<Jobs, Error> {
         use {
             ErrorType::*,
@@ -413,32 +446,8 @@ impl<'a> Ast<'a> {
         let mut jobs = Vec::with_capacity(self.items.len() / 2);
         for item in std::mem::take(&mut self.items).into_iter() {
             match item {
-                Item::If(if_) => {
-                    let lv = self.get_value_(if_.left_side);
-                    let rv = self.get_value_(if_.right_side);
-
-                    let mut bool = lv.eq(&rv);
-                    if if_.rev { bool = !bool; };
-                    let tokens = if bool {
-                        if_.body
-                    } else {
-                        if_.else_body
-                    };
-
-                    for item in tokens {
-                        match item {
-                            Item::Decl(decl) => {
-                                self.eval_decl(&decl);
-                            },
-                            Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
-                                self.parse_expr(&expr);
-                            } else {
-                                println!("{:#?}", expr.left_side);
-                                panic!("In-place math expressions are not supported yet BRUH")
-                            },
-                            _ => todo!()
-                        }
-                    }
+                Item::If(r#if) => {
+                    self.process_if_tokens(self.parse_if(r#if));
                 }
                 Item::Decl(decl) => {
                     self.eval_decl(&decl);
@@ -446,7 +455,6 @@ impl<'a> Ast<'a> {
                 Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
                     self.parse_expr(&expr);
                 } else {
-                    println!("{:#?}", expr.left_side);
                     panic!("In-place math expressions are not supported yet BRUH")
                 },
                 Item::Job(job) => {
