@@ -19,7 +19,6 @@ use std::{
     fs::read_to_string
 };
 
-
 fn main() -> std::io::Result::<()> {
     let flags = parse_flags();
     if let Some(dir) = flags.env_dir.as_ref() {

@@ -2,15 +2,10 @@ use crate::{
     execution::cmd::Jobs,
     parsing::{
         ast::{
-            Ast,
-            Job,
-            Decl,
+            If, Ast, Decl, Expr, Item, Job, Operation
         },
         lexer::{
-            Token,
-            Tokens,
-            TokenType,
-            LinizedTokens,
+            LinizedTokens, Token, TokenType, Tokens
         }
     },
 };
@@ -23,11 +18,12 @@ use std::{
 
 pub type LinizedTokensIterator<'a> = Peekable::<Iter::<'a, (usize, Tokens<'a>)>>;
 
-#[allow(unused)]
-const KEYWORDS: &'static [&'static str] = &[
+const IFS: &'static [&'static str] = &[
+    "ifeq", "ifneq"
 ];
 
 pub enum ErrorType {
+    NoClosingEndif,
     UnexpectedToken,
     JobWithoutTarget,
     ExpectedOnlyOneTokenOnTheLeftSide,
@@ -37,8 +33,9 @@ impl fmt::Display for ErrorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ErrorType::*;
         match self {
-            UnexpectedToken                   => write!(f, "Unexpected token"),
-            JobWithoutTarget                  => write!(f, "Job without a target"),
+            NoClosingEndif => write!(f, "No closing endif"),
+            UnexpectedToken => write!(f, "Unexpected token"),
+            JobWithoutTarget => write!(f, "Job without a target"),
             ExpectedOnlyOneTokenOnTheLeftSide => write!(f, "Expected only one token on the left side")
         }
     }
@@ -120,6 +117,49 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_eq(first: &'a Token, line: &'a Tokens, eq_idx: usize) -> Item<'a> {
+        if let Some(token) = line.get(eq_idx - 1) {
+            if token.str.eq("+") {
+                let Some(right_side) = line.get(eq_idx + 1) else {
+                    panic!("Expected right side after expression")
+                };
+
+                let left_side = line.get(eq_idx - 2).unwrap();
+                let expr = Expr::new(left_side, Operation::PlusEqual, right_side);
+                return Item::Expr(expr)
+            } else if token.str.ends_with("+") {
+                let Some(right_side) = line.get(eq_idx + 1) else {
+                    panic!("Expected right side after expression")
+                };
+
+                let expr = Expr::new(token, Operation::PlusEqual, right_side);
+                return Item::Expr(expr)
+            } else if token.str.eq("-") {
+                let Some(right_side) = line.get(eq_idx + 2) else {
+                    panic!("Expected right side after expression")
+                };
+
+                let left_side = line.get(eq_idx - 2).unwrap();
+                let expr = Expr::new(left_side, Operation::MinusEqual, right_side);
+                return Item::Expr(expr)
+            } else if token.str.ends_with("-") {
+                let Some(right_side) = line.get(eq_idx + 1) else {
+                    panic!("Expected right side after expression")
+                };
+
+                let expr = Expr::new(token, Operation::MinusEqual, right_side);
+                return Item::Expr(expr)
+            }
+        }
+
+        // self.check_token_pos(eq_idx, Some(first));
+
+        let left_side = first;
+        let right_side = line[eq_idx + 1..].into_iter().collect::<Vec::<_>>();
+        let decl = Decl::new(left_side, right_side);
+        Item::Decl(decl)
+    }
+
     fn parse_line(&mut self, _: &usize, line: &'a Tokens) {
         use {
             ErrorType::*,
@@ -128,18 +168,55 @@ impl<'a> Parser<'a> {
 
         let mut iter = line.into_iter().peekable();
         let Some(first) = iter.peek() else { return };
+        if first.str.eq("endif") { return };
         match first.typ {
-            // Found a variable declaration
-            Literal => if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
-                self.check_token_pos(eq_idx, Some(first));
+            Literal => if IFS.contains(&first.str) {
+                let mut endif = false;
+                let mut body = Vec::new();
+                let (mut else_body, mut else_flag) = (Vec::new(), false);
+                while let Some((_, line)) = self.iter.next() {
+                    if line.iter().find(|t| t.str.eq("else")).is_some() {
+                        else_flag = true;
+                    } else {
+                        if line.iter().any(|t| t.str.eq("endif")) {
+                            endif = true;
+                            break
+                        }
 
-                let left_side = first;
-                let right_side = &line[eq_idx + 1..];
+                        let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) else { continue };
+                        let Some(first) = line.get(eq_idx - 1) else { continue };
+                        let item = Self::parse_eq(first, line, eq_idx);
+                        if else_flag {
+                            else_body.push(item);
+                        } else {
+                            body.push(item);
+                        }
+                    }
+                }
 
-                let decl = Decl::new(left_side, right_side);
-                self.ast.decls.push(decl);
+                if !endif {
+                    self.err_token = Some(first);
+                    self.report_err(Error::new(NoClosingEndif, None));
+                }
 
-            // Found a job declaration
+                let rev = if first.str.eq("ifeq") { false } else { true };
+
+                // Skip the if keyword
+                iter.next();
+
+                let Some(left_side) = iter.next() else {
+                    panic!("If without a left_side")
+                };
+
+                let Some(right_side) = iter.next() else {
+                    panic!("If without a right_side")
+                };
+
+                let r#if = If::new(rev, left_side, right_side, body, else_body);
+                self.ast.items.push(Item::If(r#if));
+            } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
+                let item = Self::parse_eq(first, line, eq_idx);
+                self.ast.items.push(item);
             } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
                 self.check_token_pos(colon_idx, Some(first));
 
@@ -153,7 +230,7 @@ impl<'a> Parser<'a> {
                 }
 
                 let job = Job::new(target, dependencies, body);
-                self.ast.jobs.push(job);
+                self.ast.items.push(Item::Job(job));
             } else {
                 self.uft_err(line);
             },

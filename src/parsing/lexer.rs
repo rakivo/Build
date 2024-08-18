@@ -14,7 +14,7 @@ pub type Tokens<'a> = Vec::<Token<'a>>;
 pub type LinizedTokens<'a> = Vec::<(usize, Tokens<'a>)>;
 pub type Lines<'a> = Peekable<Enumerate<str::Lines<'a>>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TokenType {
     Char,
     String,
@@ -34,6 +34,7 @@ pub enum TokenType {
     Colon,
 }
 
+#[derive(Clone)]
 pub struct Loc<'a>(pub &'a PathBuf, pub usize, pub usize);
 
 impl fmt::Display for Loc<'_> {
@@ -42,6 +43,7 @@ impl fmt::Display for Loc<'_> {
     }
 }
 
+#[derive(Clone)]
 pub struct Token<'a> {
     pub wc:  usize,
     pub typ: TokenType,

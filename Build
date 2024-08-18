@@ -3,13 +3,22 @@ FLAGS=-g
 VAR=burson.c
 FOO=yarson.rs
 
+#FOO+=#VAR
+
+ifneq #FOO, #FOO
+    #FOO+=BRATIK
+else
+    BAR=BRATIK
+endif
+
 out: test.c bar
     #CC #FLAGS -o $t $d
 
 foo: test.c
-    echo "foo"
+    @echo #BAR
+    @echo "foo"
 
 bar: foo
-    echo "bar"
+    @echo "bar"
 
 all:
