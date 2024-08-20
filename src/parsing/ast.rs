@@ -180,12 +180,20 @@ impl fmt::Display for Error {
     }
 }
 
+// pub type Export<'a> = Vec::<&'a Token<'a>>;
+// pub type Unexport<'a> = Vec::<&'a Token<'a>>;
+
+pub type Export<'a> = &'a [Token<'a>];
+pub type Unexport<'a> = &'a [Token<'a>];
+
 #[derive(Debug)]
 pub enum Item<'a> {
     If(If<'a>),
+    Job(Job<'a>),
     Decl(Decl<'a>),
     Expr(Expr<'a>),
-    Job(Job<'a>)
+    Export(Export<'a>),
+    Unexport(Unexport<'a>)
 }
 
 enum ParsingSection {
@@ -311,26 +319,34 @@ impl<'a> Ast<'a> {
     fn get_value_(&self, token: &'a Token) -> String {
         use ErrorType::*;
 
-        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            let name = if token.str.ends_with(",") {
-                &token.str[1..token.str.len() - 1]
-            } else {
-                &token.str[1..]
-            };
+        let trimmed = if token.str.ends_with(",") {
+            &token.str[..token.str.len() - 1]
+        } else {
+            &token.str
+        };
 
-            if name.is_empty() {
+        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
+            if trimmed[1..].is_empty() {
                 self.report_err(Error::new(UndefinedVariable, None), Some(token));
             }
 
-            if let Some(value) = self.vars.get(name) {
+            if let Some(value) = self.vars.get(&trimmed[1..]) {
                 value.iter().map(|x| x.str).collect::<Vec::<_>>().join(" ")
             } else {
                 self.report_err(Error::new(UndefinedVariable, None), Some(token))
             }
-        } else if token.str.ends_with(",") {
-            token.str[..token.str.len() - 1].to_owned()
+        } else if token.str.starts_with("$") {
+            if trimmed[1..].is_empty() {
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
+            }
+
+            if let Ok(value) = env::var(&trimmed[1..]) {
+                value
+            } else {
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token))
+            }
         } else {
-            token.str.to_owned()
+            trimmed.to_owned()
         }
     }
 
@@ -392,25 +408,47 @@ impl<'a> Ast<'a> {
         }
     }
 
+    fn export_unexport(&self, exports: Export, un: bool) {
+        use ErrorType::*;
+
+        for export in exports {
+            if let Some(v) = self.vars.get(export.str) {
+                if un {
+                    env::remove_var(export.str);
+                } else {
+                    env::set_var(export.str, v.iter().map(|t| t.str).collect::<Vec::<_>>().join(" "));
+                }
+            } else {
+                self.report_err(Error::new(UndefinedVariable, None), Some(export));
+            }
+        }
+    }
+
+    fn process_item(&mut self, item: Item<'a>) {
+        match item {
+            Item::If(r#if)   => self.process_if_tokens(r#if),
+            Item::Decl(decl) => self.eval_decl(decl),
+            Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
+                self.parse_expr(&expr);
+            } else {
+                panic!("In-place math expressions are not supported yet BRUH")
+            }
+            Item::Job(job) => self.parse_job(job),
+            Item::Export(exports) => self.export_unexport(exports, false),
+            Item::Unexport(unexports) => self.export_unexport(unexports, true),
+        }
+    }
+
     fn process_if_tokens(&mut self, r#if: If<'a>) {
         for item in self.parse_if(r#if).into_iter() {
-            match item {
-                Item::If(r#if)   => self.process_if_tokens(r#if),
-                Item::Decl(decl) => self.eval_decl(decl),
-                Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
-                    self.parse_expr(&expr);
-                } else {
-                    panic!("In-place math expressions are not supported yet BRUH")
-                }
-                Item::Job(job) => self.parse_job(job)
-            }
+            self.process_item(item);
         }
     }
 
     fn parse_if(&self, r#if: If<'a>) -> Vec::<Item<'a>> {
         let lv = self.get_value_(r#if.left_side);
         let rv = self.get_value_(r#if.right_side);
-        let mut bool = lv.eq(&rv);
+        let mut bool = lv.trim().eq(rv.trim());
         if r#if.rev { bool = !bool; };
         if bool {
             r#if.body
@@ -507,16 +545,7 @@ impl<'a> Ast<'a> {
 
     pub fn parse(&mut self, items: Items<'a>) {
         for item in items.into_iter() {
-            match item {
-                Item::If(r#if) => self.process_if_tokens(r#if),
-                Item::Decl(decl) => self.eval_decl(decl),
-                Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
-                    self.parse_expr(&expr);
-                } else {
-                    panic!("In-place math expressions are not supported yet BRUH")
-                },
-                Item::Job(job) => self.parse_job(job)
-            }
+            self.process_item(item);
         }
 
         if self.detect_cycle() {

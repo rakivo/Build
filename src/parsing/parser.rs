@@ -1,10 +1,13 @@
 use crate::{
     parsing::{
         ast::{
-            If, Ast, Decl, Expr, Item, Items, Job, Operation
+            If, Ast, Decl, Expr,
+            Item, Items, Job,
+            Operation
         },
         lexer::{
-            LinizedTokens, Token, TokenType, Tokens
+            LinizedTokens, Token,
+            TokenType, Tokens
         }
     },
 };
@@ -21,10 +24,19 @@ const IFS: &'static [&'static str] = &[
     "ifeq", "ifneq"
 ];
 
+const EXPORT: &'static str = "export";
+const UNEXPORT: &'static str = "unexport";
+
+const EXPORTS: &'static [&'static str] = &[
+    EXPORT, UNEXPORT
+];
+
 pub enum ErrorType {
     NoClosingEndif,
     UnexpectedToken,
     JobWithoutTarget,
+    ExportWithNoArgs,
+    UnexportWithNoArgs,
     ExpectedOnlyOneTokenOnTheLeftSide,
 }
 
@@ -34,7 +46,9 @@ impl fmt::Display for ErrorType {
         match self {
             NoClosingEndif => write!(f, "No closing endif"),
             UnexpectedToken => write!(f, "Unexpected token"),
+            ExportWithNoArgs => write!(f, "Export with no args"),
             JobWithoutTarget => write!(f, "Job without a target"),
+            UnexportWithNoArgs => write!(f, "Unexport with no args"),
             ExpectedOnlyOneTokenOnTheLeftSide => write!(f, "Expected only one token on the left side")
         }
     }
@@ -64,6 +78,16 @@ impl fmt::Display for Error {
             write!(f, "{ty}")
         }
     }
+}
+
+macro_rules! collect_exports {
+    ($self: expr, $first: expr, $line: expr, $vty: tt, $errty: expr) => {{
+        let item = &$line[1..];
+        if item.is_empty() {
+            Self::report_err(Some($first), Error::new($errty, None));
+        }
+        $self.items.push(Item::$vty(item));
+    }};
 }
 
 pub struct Parser<'a> {
@@ -157,6 +181,15 @@ impl<'a> Parser<'a> {
         Item::Decl(decl)
     }
 
+    fn parse_export_unexport(first: &'a Token, line: &'a Tokens) -> Item<'a> {
+        let exports = &line[1..];
+        if first.str.eq(EXPORT) {
+            Item::Export(exports)
+        } else {
+            Item::Unexport(exports)
+        }
+    }
+
     fn parse_if(first: &Token, iter: &mut Peekable<Iter<'a, Token>>, iter2: &mut LinizedTokensIterator<'a>) -> Item<'a> {
         use ErrorType::*;
 
@@ -177,10 +210,13 @@ impl<'a> Parser<'a> {
                 let item = if IFS.contains(&first.str) {
                     let mut iter = line.into_iter().peekable();
                     Self::parse_if(first, &mut iter, iter2)
-                } else {
-                    let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, TokenType::Equal)) else { continue };
+                } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, TokenType::Equal)) {
                     let Some(first) = line.get(eq_idx - 1) else { continue };
                     Self::parse_eq(first, line, eq_idx)
+                } else if EXPORTS.contains(&first.str) {
+                    Self::parse_export_unexport(first, line)
+                } else {
+                    todo!()
                 };
 
                 if else_flag {
@@ -222,6 +258,10 @@ impl<'a> Parser<'a> {
             Literal => if IFS.contains(&first.str) {
                 let item = Self::parse_if(first, &mut iter, &mut self.iter);
                 self.items.push(item);
+            } else if first.str.eq(EXPORT) {
+                collect_exports!(self, first, line, Export, ExportWithNoArgs);
+            } else if first.str.eq(UNEXPORT) {
+                collect_exports!(self, first, line, Unexport, UnexportWithNoArgs);
             } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
                 let item = Self::parse_eq(first, line, eq_idx);
                 self.items.push(item);

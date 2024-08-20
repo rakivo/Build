@@ -5,6 +5,12 @@ FOO=yarson.rs
 
 #FOO+=#VAR
 
+export VAR
+
+ifeq $VAR, $VAR
+    export FOO
+endif
+
 ifeq #FOO, #FOO
     ifeq 1, 2
         BAR=YAR
@@ -20,6 +26,7 @@ out: test.c bar
     #CC #FLAGS -o $t $d
 
 foo: test.c
+    @echo FOO = $FOO
     @echo #BAR
     @echo "foo"
 
