@@ -1,33 +1,39 @@
 use crate::{
     new_flag,
-    execution::flag::*,
+    execution::flag::*
 };
 
+use std::process::exit;
+
 pub struct Flags {
-    // <Buildfile> [-j, --job] <name_of_job>
     pub job: Option::<String>,
-
-    // <Buildfile> [-C, --directory] <path_to_env_dir>
     pub env_dir: Option::<String>,
-
-    // <Buildfile> [-B, --always-make]
     pub phony: bool,
-
-    // <Buildfile> [-s, --silent]
     pub silent: bool,
-
-    // <Buildfile> [-k, --keep-going]
-    pub keepgoing: bool,
+    pub keepgoing: bool
 }
 
 pub fn parse_flags() -> Flags {
     let parser = Parser::new();
 
-    let job_flag:       Flag::<String> = new_flag!("-j", "--job");
-    let env_dir_flag:   Flag::<String> = new_flag!("-C", "--directory");
-    let phony_flag:     Flag::<bool>   = new_flag!("-B", "--always-make");
-    let silent_flag:    Flag::<bool>   = new_flag!("-s", "--silent");
-    let keepgoing_flag: Flag::<bool>   = new_flag!("-k", "--keep-going");
+    let help_flag: Flag::<bool>        = new_flag!("-h", "--help", "help flag");
+
+    let job_flag:       Flag::<String> = new_flag!("-j", "--job", "name of a specific job to execute");
+    let env_dir_flag:   Flag::<String> = new_flag!("-C", "--directory", "path to a specific directory to `cd` into before executing jobs");
+    let phony_flag:     Flag::<bool>   = new_flag!("-B", "--always-make", "always rebuild the job, regardless of whether it needs to be rebuilt");
+    let silent_flag:    Flag::<bool>   = new_flag!("-s", "--silent", "disable cmd echo");
+    let keepgoing_flag: Flag::<bool>   = new_flag!("-k", "--keep-going", "don't exit if process exited with non-zero code");
+
+    if parser.passed(&help_flag) {
+        println!("Usage: build [options] ...");
+        println!("Options:");
+        println!("  {job_flag}");
+        println!("  {env_dir_flag}");
+        println!("  {phony_flag}");
+        println!("  {silent_flag}");
+        println!("  {keepgoing_flag}");
+        exit(0);
+    }
 
     Flags {
         job: parser.parse(&job_flag),

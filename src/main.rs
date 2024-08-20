@@ -13,6 +13,8 @@ use execution::{
     },
 };
 
+#[cfg(feature = "dbg")]
+use std::time::Instant;
 use std::{
     env,
     process::exit,
@@ -20,6 +22,11 @@ use std::{
 };
 
 fn main() -> std::io::Result::<()> {
+    #[cfg(feature = "dbg")]
+    {
+        let start = Instant::now();
+    }
+
     let flags = parse_flags();
     if let Some(dir) = flags.env_dir.as_ref() {
         println!("Entering directory \"{dir}\"");
@@ -41,6 +48,12 @@ fn main() -> std::io::Result::<()> {
 
     let mut execute = Execute::new(jobs, flags);
     execute.execute()?;
+
+    #[cfg(feature = "dbg")]
+    {
+        let end = start.elapsed().as_micros();
+        println!("Parsing done in {end}us");
+    }
 
     Ok(())
 }

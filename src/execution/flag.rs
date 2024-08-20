@@ -1,4 +1,4 @@
-// This is a crate developed by me: <https://github.com/rakivo/flag>
+// This is a modified version of crate that is available on github, so, you can probably take a closer look into it: <https://github.com/rakivo/flag>
 
 use std::{
     env,
@@ -149,6 +149,7 @@ macro_rules! impl_try_parse {
                         help: flag.help,
                         mandatory: flag.mandatory,
                         default: flag.default.map(|x| x as _),
+                        description: flag.description
                     }).map(|x| x as _)
                 }
 
@@ -160,6 +161,7 @@ macro_rules! impl_try_parse {
                         help: flag.help,
                         mandatory: flag.mandatory,
                         default: flag.default.map(|x| x as _),
+                        description: flag.description
                     }, nargs).map(|x| x.into_iter().map(|x| x as _).collect())
                 }
             }
@@ -176,6 +178,7 @@ macro_rules! impl_try_parse {
                             start: x.start as _,
                             end: x.end as _,
                         }),
+                        description: flag.description
                     }).map(|x| Range {
                         start: x.start as _,
                         end: x.end as _,
@@ -193,6 +196,7 @@ macro_rules! impl_try_parse {
                             start: x.start as _,
                             end: x.end as _,
                         }),
+                        description: flag.description
                     }, nargs).map(|x| x.into_iter().map(|x| Range {
                         start: x.start as _,
                         end: x.end as _,
@@ -218,17 +222,26 @@ pub struct Flag<T = ()> {
     long: &'static str,
     help: Option::<&'static str>,
     mandatory: bool,
-    default: Option::<T>
+    default: Option::<T>,
+    description: &'static str
 }
 
 #[macro_export]
 macro_rules! new_flag {
-    ($short: literal, $long: literal) => {
-        Flag::new($short, $long, None)
+    ($short: literal, $long: literal, $description: literal) => {
+        Flag::new($short, $long, None, $description)
     };
-    ($short: literal, $long: literal, $def: expr) => {
-        Flag::new($short, $long, Option::Some($def))
+    ($short: literal, $long: literal, $def: expr, $description: literal) => {
+        Flag::new($short, $long, Option::Some($def), $description)
     };
+}
+
+impl<T> std::fmt::Display for Flag<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const DPAD: usize = 20;
+        let flags = format!("[{s}, {l}]", s = self.short, l = self.long);
+        write!(f, "{flags} {}{}", " ".repeat(DPAD - (flags.len())), self.description)
+    }
 }
 
 /// I separated moving and borrowing methods to conveniently create flags in one line, e.g.
@@ -241,13 +254,14 @@ impl<T> Flag<T>
 where
     T: TryParse
 {
-    pub const fn new(short: &'static str, long: &'static str, default: Option::<T>) -> Self {
+    pub const fn new(short: &'static str, long: &'static str, default: Option::<T>, description: &'static str) -> Self {
         Self {
             short,
             long,
             help: None,
             mandatory: false,
             default,
+            description
         }
     }
 

@@ -270,60 +270,6 @@ impl<'a> Ast<'a> {
         }
     }
 
-    fn get_value(&self, token: &'a Token<'a>, section: ParsingSection, curr_job: &CurrJob) -> String {
-        use {
-            ErrorType::*,
-            ParsingSection::*,
-        };
-
-        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            let name = &token.str[1..];
-            if name.is_empty() {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token));
-            }
-
-            if let Some(value) = self.vars.get(name) {
-                value.iter().map(|x| x.str).collect::<Vec::<_>>().join(" ")
-            } else {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token))
-            }
-        } else if token.str.starts_with('$') {
-            let name = &token.str[1..];
-            if name.is_empty() {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
-            }
-
-            if Self::SPECIAL_NAMES.contains(&name) {
-                match name.as_bytes()[0] {
-                    b'd' | b'<' => if matches!(section, Dependencies | Target) {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody,
-                                                   Some("You can use \"$d\" and \"$<\" ONLY in body of job")), Some(token));
-                    } else if let Some(dep) = curr_job.dependencies.unwrap().first() {
-                        dep.to_owned()
-                    } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
-                    },
-
-                    b't' | b'@' => if matches!(section, Target) {
-                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection,
-                                                   Some("You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies")), Some(token));
-                    } else if let Some(target) = curr_job.target {
-                        target.to_owned()
-                    } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
-                    },
-                    _ => unreachable!()
-                }
-            } else if let Ok(value) = env::var(name) {
-                value
-            } else {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token))
-            }
-        } else {
-            token.str.to_owned()
-        }
-    }
-
     fn detect_cycle(&self) -> bool {
         let mut visited = HashSet::with_capacity(self.jobs.len());
         let mut in_rec_stack = HashSet::with_capacity(self.jobs.len());
@@ -470,6 +416,60 @@ impl<'a> Ast<'a> {
             r#if.body
         } else {
             r#if.else_body
+        }
+    }
+
+    fn get_value(&self, token: &'a Token<'a>, section: ParsingSection, curr_job: &CurrJob) -> String {
+        use {
+            ErrorType::*,
+            ParsingSection::*,
+        };
+
+        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
+            let name = &token.str[1..];
+            if name.is_empty() {
+                self.report_err(Error::new(UndefinedVariable, None), Some(token));
+            }
+
+            if let Some(value) = self.vars.get(name) {
+                value.iter().map(|x| x.str).collect::<Vec::<_>>().join(" ")
+            } else {
+                self.report_err(Error::new(UndefinedVariable, None), Some(token))
+            }
+        } else if token.str.starts_with('$') {
+            let name = &token.str[1..];
+            if name.is_empty() {
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
+            }
+
+            if Self::SPECIAL_NAMES.contains(&name) {
+                match name.as_bytes()[0] {
+                    b'd' | b'<' => if matches!(section, Dependencies | Target) {
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody,
+                                                   Some("You can use \"$d\" and \"$<\" ONLY in body of job")), Some(token));
+                    } else if let Some(dep) = curr_job.dependencies.unwrap().first() {
+                        dep.to_owned()
+                    } else {
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
+                    },
+
+                    b't' | b'@' => if matches!(section, Target) {
+                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection,
+                                                   Some("You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies")), Some(token));
+                    } else if let Some(target) = curr_job.target {
+                        target.to_owned()
+                    } else {
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
+                    },
+                    _ => unreachable!()
+                }
+            } else if let Ok(value) = env::var(name) {
+                value
+            } else {
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token))
+            }
+        } else {
+            token.str.to_owned()
         }
     }
 
