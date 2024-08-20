@@ -17,7 +17,6 @@ use std::{
     collections::{HashMap, HashSet}
 };
 
-#[derive(Debug)]
 pub struct Decl<'a> {
     pub left_side: &'a Token<'a>,
     pub right_side: Vec::<&'a Token<'a>>,
@@ -33,11 +32,17 @@ impl<'a> Decl<'a> {
     }
 }
 
+impl fmt::Debug for Decl<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 impl fmt::Display for Decl<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{l}=", l = self.left_side)?;
+        write!(f, "{l} =", l = self.left_side.str)?;
         for t in self.right_side.iter() {
-            write!(f, "{s} ", s = t.str)?
+            write!(f, " {s}", s = t.str)?
         }
         Ok(())
     }
@@ -54,7 +59,6 @@ pub enum Operation {
     MinusEqual,
 }
 
-#[derive(Debug)]
 pub struct Expr<'a> {
     pub left_side: &'a Token<'a>,
     pub operation: Operation,
@@ -69,6 +73,18 @@ impl<'a> Expr<'a> {
         -> Self
     {
         Self { left_side, operation, right_side }
+    }
+}
+
+impl fmt::Debug for Expr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self, f)
+    }
+}
+
+impl fmt::Display for Expr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{l} {o:?} {r}", l = self.left_side.str, o = self.operation, r = self.right_side.str)
     }
 }
 
@@ -92,16 +108,16 @@ impl<'a> Job<'a> {
 
 impl fmt::Display for Job<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{t}: ", t = self.target)?;
+        write!(f, "{t}: ", t = self.target.str)?;
         for t in self.dependencies {
-            write!(f, "{t} ")?;
+            write!(f, "{s} ", s = t.str)?;
         }
 
         writeln!(f)?;
         for line in self.body.iter() {
             write!(f, "   ")?;
             for t in line.iter() {
-                write!(f, " {t}")?
+                write!(f, " {s}", s = t.str)?
             }
         }
 
@@ -134,7 +150,7 @@ impl fmt::Display for ErrorType {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self, f)
+        fmt::Display::fmt(&self, f)
     }
 }
 
@@ -184,7 +200,6 @@ struct CurrJob<'a> {
     dependencies: Option::<&'a Vec::<String>>,
 }
 
-#[derive(Debug)]
 pub struct If<'a> {
     rev: bool,
     left_side: &'a Token<'a>,
@@ -205,9 +220,38 @@ impl<'a> If<'a> {
     }
 }
 
+impl fmt::Debug for If<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl fmt::Display for If<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let r#if = if self.rev { "ifneq" } else { "ifeq" };
+        writeln!(f, "{if} {l} {r}", l = self.left_side.str, r = self.right_side.str)?;
+        for item in self.body.iter() {
+            write!(f, "\t{item:?}")?;
+        }
+
+        writeln!(f)?;
+        if !self.else_body.is_empty() {
+            writeln!(f, "else")?;
+
+            for item in self.else_body.iter() {
+                write!(f, "\t{item:?}")?;
+            }
+        }
+
+        write!(f, "\nendif")
+    }
+}
+
+pub type Items<'a> = Vec::<Item<'a>>;
+
 #[derive(Default)]
 pub struct Ast<'a> {
-    pub items: Vec::<Item<'a>>,
+    pub jobs: Jobs,
     vars: HashMap::<&'a str, Vec::<&'a Token<'a>>>,
 }
 
@@ -280,16 +324,16 @@ impl<'a> Ast<'a> {
         }
     }
 
-    fn detect_cycle(jobs: &Jobs) -> bool {
-        let mut visited = HashSet::with_capacity(jobs.len());
-        let mut in_rec_stack = HashSet::with_capacity(jobs.len());
-        let job_map = HashMap::from_iter(jobs.iter().map(|job| (job.target.as_str(), job)).into_iter());
+    fn detect_cycle(&self) -> bool {
+        let mut visited = HashSet::with_capacity(self.jobs.len());
+        let mut in_rec_stack = HashSet::with_capacity(self.jobs.len());
+        let job_map = HashMap::from_iter(self.jobs.iter().map(|job| (job.target.as_str(), job)).into_iter());
 
         fn dfs<'a>(job_target: &'a str,
                    job_map: &HashMap::<&'a str, &'a CmdJob>,
                    visited: &mut HashSet::<&'a str>,
                    in_rec_stack: &mut HashSet::<&'a str>)
-                   -> bool
+            -> bool
         {
             if in_rec_stack.contains(job_target) { return true }
             if visited.contains(job_target) { return false }
@@ -344,7 +388,7 @@ impl<'a> Ast<'a> {
         }
     }
 
-    fn eval_decl(&mut self, decl: &Decl<'a>) {
+    fn eval_decl(&mut self, decl: Decl<'a>) {
         use ErrorType::*;
 
         if self.vars.contains_key(&decl.left_side.str) {
@@ -353,19 +397,19 @@ impl<'a> Ast<'a> {
 
         if let Some(token) = decl.right_side.first() {
             if !token.str.starts_with("#") {
-                self.vars.insert(decl.left_side.str, decl.right_side.to_owned());
+                self.vars.insert(decl.left_side.str, decl.right_side);
                 return
             }
 
             if let Some(value) = self.vars.get(&token.str[1..]) {
-                let mut v = decl.right_side.to_owned();
-                v.extend(value.iter());
+                let mut v = decl.right_side;
+                v.extend(value);
                 self.vars.insert(decl.left_side.str, v);
             } else {
                 self.report_err(Error::new(UndefinedVariable, None), Some(token))
             }
         } else {
-            self.vars.insert(decl.left_side.str, decl.right_side.to_owned());
+            self.vars.insert(decl.left_side.str, decl.right_side);
         }
     }
 
@@ -394,33 +438,25 @@ impl<'a> Ast<'a> {
         };
 
         match expr.operation {
-            Operation::PlusEqual => {
-                decl.extend(value);
-            }
-            Operation::MinusEqual => {
-                *decl = take(decl).into_iter().filter(|token| {
+            Operation::PlusEqual  => decl.extend(value),
+            Operation::MinusEqual => *decl = take(decl).into_iter().filter(|token| {
                     token.str != expr.right_side.str
-                }).collect::<Vec::<_>>();
-            }
+            }).collect::<Vec::<_>>(),
             _ => todo!()
         }
     }
 
-    fn process_if_tokens(&mut self, items: Vec::<Item<'a>>) {
-        for item in items.into_iter() {
+    fn process_if_tokens(&mut self, r#if: If<'a>) {
+        for item in self.parse_if(r#if).into_iter() {
             match item {
-                Item::If(r#if) => {
-                    self.process_if_tokens(self.parse_if(r#if));
-                },
-                Item::Decl(decl) => {
-                    self.eval_decl(&decl);
-                },
+                Item::If(r#if)   => self.process_if_tokens(r#if),
+                Item::Decl(decl) => self.eval_decl(decl),
                 Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
                     self.parse_expr(&expr);
                 } else {
                     panic!("In-place math expressions are not supported yet BRUH")
-                },
-                _ => todo!()
+                }
+                Item::Job(job) => self.parse_job(job)
             }
         }
     }
@@ -437,61 +473,55 @@ impl<'a> Ast<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result::<Jobs, Error> {
+    fn parse_job(&mut self, job: Job) {
         use {
             ErrorType::*,
             ParsingSection::*
         };
 
-        let mut jobs = Vec::with_capacity(self.items.len() / 2);
-        for item in std::mem::take(&mut self.items).into_iter() {
+        let mut curr_job = CurrJob::default();
+        let target = self.get_value(job.target, Target, &curr_job);
+        curr_job.target = Some(&target);
+
+        let deps = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
+            |mut deps, t|
+        {
+            let value = self.get_value(t, Dependencies, &curr_job);
+            if target.eq(&value) {
+                let err = Error::new(JobDependsOnItself, None);
+                eprintln!("{t}: [ERROR] {err}\n\tNOTE: Job \"{target}\" depends on itself, so, infinite recursion detected");
+                exit(1)
+            }
+            deps.push(value);
+            deps
+        });
+
+        curr_job.dependencies = Some(&deps);
+        let body = job.body.iter().map(|line| {
+            line.iter().map(|t| self.get_value(t, Body, &curr_job)).collect::<Vec::<_>>()
+        }).collect::<Vec::<_>>();
+
+        let job = CmdJob::new(target, deps, body);
+        self.jobs.push(job);
+    }
+
+    pub fn parse(&mut self, items: Items<'a>) {
+        for item in items.into_iter() {
             match item {
-                Item::If(r#if) => {
-                    self.process_if_tokens(self.parse_if(r#if));
-                }
-                Item::Decl(decl) => {
-                    self.eval_decl(&decl);
-                },
+                Item::If(r#if) => self.process_if_tokens(r#if),
+                Item::Decl(decl) => self.eval_decl(decl),
                 Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
                     self.parse_expr(&expr);
                 } else {
                     panic!("In-place math expressions are not supported yet BRUH")
                 },
-                Item::Job(job) => {
-                    let mut curr_job = CurrJob::default();
-                    let target = self.get_value(job.target, Target, &curr_job);
-                    curr_job.target = Some(&target);
-
-                    let deps = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
-                        |mut deps, t|
-                    {
-                        let value = self.get_value(t, Dependencies, &curr_job);
-                        if target.eq(&value) {
-                            let err = Error::new(JobDependsOnItself, None);
-                            eprintln!("{t}: [ERROR] {err}\n\tNOTE: Job \"{target}\" depends on itself, so, infinite recursion detected");
-                            exit(1)
-                        }
-
-                        deps.push(value);
-                        deps
-                    });
-
-                    curr_job.dependencies = Some(&deps);
-                    let body = job.body.iter().map(|line| {
-                        line.iter().map(|t| self.get_value(t, Body, &curr_job)).collect::<Vec::<_>>()
-                    }).collect::<Vec::<_>>();
-
-                    let job = CmdJob::new(target, deps, body);
-                    jobs.push(job);
-                }
+                Item::Job(job) => self.parse_job(job)
             }
         }
 
-        if Self::detect_cycle(&jobs) {
+        if self.detect_cycle() {
             eprintln!("[ERROR] Infinite dependency cycle detected, aborting..");
             exit(1);
         }
-
-        Ok(jobs)
     }
 }

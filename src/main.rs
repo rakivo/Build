@@ -35,7 +35,9 @@ fn main() -> std::io::Result::<()> {
     let tokens = lexer.lex()?;
 
     let mut parser = Parser::new(&tokens);
-    let jobs = parser.parse().unwrap();
+    parser.parse();
+    parser.ast.parse(parser.items);
+    let jobs = parser.ast.jobs;
 
     let mut execute = Execute::new(jobs, flags);
     execute.execute()?;

@@ -1,8 +1,7 @@
 use crate::{
-    execution::cmd::Jobs,
     parsing::{
         ast::{
-            If, Ast, Decl, Expr, Item, Job, Operation
+            If, Ast, Decl, Expr, Item, Items, Job, Operation
         },
         lexer::{
             LinizedTokens, Token, TokenType, Tokens
@@ -23,7 +22,6 @@ const IFS: &'static [&'static str] = &[
 ];
 
 pub enum ErrorType {
-    #[allow(unused)]
     NoClosingEndif,
     UnexpectedToken,
     JobWithoutTarget,
@@ -69,9 +67,9 @@ impl fmt::Display for Error {
 }
 
 pub struct Parser<'a> {
-    ast: Ast<'a>,
+    pub ast: Ast<'a>,
+    pub items: Items<'a>,
     iter: LinizedTokensIterator<'a>,
-    err_token: Option::<&'a Token<'a>>,
 }
 
 impl<'a> Parser<'a> {
@@ -79,14 +77,14 @@ impl<'a> Parser<'a> {
     pub fn new(ts: &'a LinizedTokens<'a>) -> Self {
         Self {
             ast: Ast::default(),
+            items: Items::new(),
             iter: ts.into_iter().peekable(),
-            err_token: None
         }
     }
 
     #[track_caller]
-    fn report_err(&mut self, err: Error) -> ! {
-        if let Some(errt) = self.err_token {
+    fn report_err(err_token: Option::<&Token>, err: Error) -> ! {
+        if let Some(errt) = err_token {
             panic!("{errt}: [ERROR] {err}")
         } else {
             panic!("[ERROR] {err}")
@@ -96,9 +94,8 @@ impl<'a> Parser<'a> {
     // Unexpected First Token error
     #[inline]
     #[track_caller]
-    fn uft_err(&mut self, line: &'a Tokens) -> ! {
-        self.err_token = line.get(0);
-        self.report_err(Error::new(ErrorType::UnexpectedToken, None))
+    fn uft_err(line: &'a Tokens) -> ! {
+        Self::report_err(line.get(0), Error::new(ErrorType::UnexpectedToken, None))
     }
 
     // To check token that we have only one token on the left side in these kinda situations:
@@ -111,10 +108,9 @@ impl<'a> Parser<'a> {
     //     $CC -o $t $FLAGS
     // ```
     #[inline]
-    fn check_token_pos(&mut self, pos: usize, token: Option::<&'a Token<'a>>) {
+    fn check_token_pos(pos: usize, token: Option::<&'a Token<'a>>) {
         if pos > 1 {
-            self.err_token = token;
-            self.report_err(Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None))
+            Self::report_err(token, Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None))
         }
     }
 
@@ -153,7 +149,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // self.check_token_pos(eq_idx, Some(first));
+        Self::check_token_pos(eq_idx, Some(first));
 
         let left_side = first;
         let right_side = line[eq_idx + 1..].into_iter().collect::<Vec::<_>>();
@@ -162,6 +158,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if(first: &Token, iter: &mut Peekable<Iter<'a, Token>>, iter2: &mut LinizedTokensIterator<'a>) -> Item<'a> {
+        use ErrorType::*;
+
         let mut endif = false;
         let mut body = Vec::new();
         let (mut else_body, mut else_flag) = (Vec::new(), false);
@@ -193,16 +191,13 @@ impl<'a> Parser<'a> {
             }
         }
 
+        let keyword = iter.next().unwrap();
         if !endif {
-            panic!("No closing endif")
-            // self.err_token = Some(first);
-            // self.report_err(Error::new(NoClosingEndif, None));
+            Self::report_err(Some(keyword), Error::new(NoClosingEndif, None));
         }
 
         let rev = if first.str.eq("ifeq") { false } else { true };
 
-        // Skip the if keyword
-        iter.next();
         let Some(left_side) = iter.next() else {
             panic!("No left_side")
         };
@@ -226,12 +221,12 @@ impl<'a> Parser<'a> {
         match first.typ {
             Literal => if IFS.contains(&first.str) {
                 let item = Self::parse_if(first, &mut iter, &mut self.iter);
-                self.ast.items.push(item);
+                self.items.push(item);
             } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
                 let item = Self::parse_eq(first, line, eq_idx);
-                self.ast.items.push(item);
+                self.items.push(item);
             } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
-                self.check_token_pos(colon_idx, Some(first));
+                Self::check_token_pos(colon_idx, Some(first));
 
                 let target = first;
                 let dependencies = &line[colon_idx + 1..];
@@ -243,23 +238,21 @@ impl<'a> Parser<'a> {
                 }
 
                 let job = Job::new(target, dependencies, body);
-                self.ast.items.push(Item::Job(job));
+                self.items.push(Item::Job(job));
             } else {
-                self.uft_err(line);
+                Self::uft_err(line);
             },
             Colon => {
-                self.err_token = Some(first);
                 let err = Error::new(JobWithoutTarget, Some("Jobs without targets are not allowed here!"));
-                self.report_err(err);
+                Self::report_err(Some(first), err);
             }
-            _ => self.uft_err(line)
+            _ => Self::uft_err(line)
         };
     }
 
-    pub fn parse(&mut self) -> Result::<Jobs, crate::parsing::ast::Error> {
+    pub fn parse(&mut self) {
         while let Some((wc, line)) = self.iter.next() {
             self.parse_line(wc, line);
         }
-        self.ast.parse()
     }
 }
