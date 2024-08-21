@@ -1,7 +1,13 @@
 use crate::{
-    parsing::lexer::{
-        Token,
-        Tokens
+    parsing::{
+        parser::{
+            IFEQ, IFNEQ,
+            IFDEF, IFNDEF,
+        },
+        lexer::{
+            Token,
+            Tokens
+        },
     },
     execution::cmd::{
         Jobs,
@@ -62,14 +68,14 @@ pub enum Operation {
 pub struct Expr<'a> {
     pub left_side: &'a Token<'a>,
     pub operation: Operation,
-    pub right_side: &'a Token<'a>,
+    pub right_side: &'a [Token<'a>],
 }
 
 impl<'a> Expr<'a> {
     #[inline]
     pub fn new(left_side: &'a Token<'a>,
                operation: Operation,
-               right_side: &'a Token<'a>)
+               right_side: &'a [Token<'a>])
         -> Self
     {
         Self { left_side, operation, right_side }
@@ -84,7 +90,7 @@ impl fmt::Debug for Expr<'_> {
 
 impl fmt::Display for Expr<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{l} {o:?} {r}", l = self.left_side.str, o = self.operation, r = self.right_side.str)
+        write!(f, "{l} {o:?} {r:?}", l = self.left_side.str, o = self.operation, r = self.right_side)
     }
 }
 
@@ -208,23 +214,53 @@ struct CurrJob<'a> {
     dependencies: Option::<&'a Vec::<String>>,
 }
 
+pub enum IfKind {
+    Eq, Neq, Def, Ndef
+}
+
+impl TryFrom::<&str> for IfKind {
+    type Error = ();
+
+    fn try_from(s: &str) -> Result::<Self, Self::Error> {
+        match s {
+            IFEQ   => Ok(Self::Eq),
+            IFNEQ  => Ok(Self::Neq),
+            IFDEF  => Ok(Self::Def),
+            IFNDEF => Ok(Self::Ndef),
+            _      => Err(())
+        }
+    }
+}
+
+impl ToString for IfKind {
+    fn to_string(&self) -> String {
+        let s = match self {
+            Self::Eq   => IFEQ,
+            Self::Neq  => IFNEQ,
+            Self::Def  => IFDEF,
+            Self::Ndef => IFNDEF,
+        };
+        s.to_owned()
+    }
+}
+
 pub struct If<'a> {
-    rev: bool,
+    kind: IfKind,
     left_side: &'a Token<'a>,
-    right_side: &'a Token<'a>,
+    right_side: Option::<&'a Token<'a>>,
     body: Vec::<Item<'a>>,
     else_body: Vec::<Item<'a>>
 }
 
 impl<'a> If<'a> {
-    pub fn new(rev: bool,
+    pub fn new(kind: IfKind,
                left_side: &'a Token<'a>,
-               right_side: &'a Token<'a>,
+               right_side: Option::<&'a Token<'a>>,
                body: Vec::<Item<'a>>,
                else_body: Vec::<Item<'a>>)
        -> Self
     {
-        Self { rev, left_side, right_side, body, else_body }
+        Self { kind, left_side, right_side, body, else_body }
     }
 }
 
@@ -236,8 +272,12 @@ impl fmt::Debug for If<'_> {
 
 impl fmt::Display for If<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let r#if = if self.rev { "ifneq" } else { "ifeq" };
-        writeln!(f, "{if} {l} {r}", l = self.left_side.str, r = self.right_side.str)?;
+        let r#if = self.kind.to_string();
+        match self.kind {
+            IfKind::Eq | IfKind::Neq   => writeln!(f, "{if} {l} {r}", l = self.left_side.str, r = self.right_side.unwrap().str)?,
+            IfKind::Def | IfKind::Ndef => writeln!(f, "{if} {l}", l = self.left_side.str)?,
+        };
+
         for item in self.body.iter() {
             write!(f, "\t{item:?}")?;
         }
@@ -245,7 +285,6 @@ impl fmt::Display for If<'_> {
         writeln!(f)?;
         if !self.else_body.is_empty() {
             writeln!(f, "else")?;
-
             for item in self.else_body.iter() {
                 write!(f, "\t{item:?}")?;
             }
@@ -385,15 +424,17 @@ impl<'a> Ast<'a> {
         };
 
         let mut value = Vec::new();
-        if expr.right_side.str.starts_with("#") {
-            if let Some(v) = self.vars.get(&expr.right_side.str[1..]) {
-                value.extend(v);
+        for token in expr.right_side {
+            if token.str.starts_with("#") {
+                if let Some(v) = self.vars.get(&token.str[1..]) {
+                    value.extend(v);
+                } else {
+                    self.report_err(Error::new(UndefinedVariable, None), Some(&token))
+                }
             } else {
-                self.report_err(Error::new(UndefinedVariable, None), Some(&expr.right_side))
-            }
-        } else {
-            value.push(expr.right_side);
-        };
+                value.push(token);
+            };
+        }
 
         let Some(decl) = self.vars.get_mut(&key) else {
             self.report_err(Error::new(UndefinedVariable, None), Some(&expr.left_side))
@@ -402,7 +443,7 @@ impl<'a> Ast<'a> {
         match expr.operation {
             Operation::PlusEqual  => decl.extend(value),
             Operation::MinusEqual => *decl = take(decl).into_iter().filter(|token| {
-                    token.str != expr.right_side.str
+                expr.right_side.iter().any(|t| t.str != token.str)
             }).collect::<Vec::<_>>(),
             _ => todo!()
         }
@@ -447,13 +488,26 @@ impl<'a> Ast<'a> {
 
     fn parse_if(&self, r#if: If<'a>) -> Vec::<Item<'a>> {
         let lv = self.get_value_(r#if.left_side);
-        let rv = self.get_value_(r#if.right_side);
-        let mut bool = lv.trim().eq(rv.trim());
-        if r#if.rev { bool = !bool; };
-        if bool {
-            r#if.body
-        } else {
-            r#if.else_body
+        match r#if.kind {
+            IfKind::Eq | IfKind::Neq => {
+                let rv = self.get_value_(r#if.right_side.unwrap());
+                let mut bool = lv.trim().eq(rv.trim());
+                if matches!(r#if.kind, IfKind::Neq) { bool = !bool; };
+                if bool {
+                    r#if.body
+                } else {
+                    r#if.else_body
+                }
+            }
+            IfKind::Def | IfKind::Ndef => {
+                let mut bool = self.vars.contains_key(&lv.as_str());
+                if matches!(r#if.kind, IfKind::Ndef) { bool = !bool; };
+                if bool {
+                    r#if.body
+                } else {
+                    r#if.else_body
+                }
+            }
         }
     }
 

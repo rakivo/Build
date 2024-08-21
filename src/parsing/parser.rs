@@ -3,7 +3,7 @@ use crate::{
         ast::{
             If, Ast, Decl, Expr,
             Item, Items, Job,
-            Operation
+            Operation, IfKind
         },
         lexer::{
             LinizedTokens, Token,
@@ -20,18 +20,25 @@ use std::{
 
 pub type LinizedTokensIterator<'a> = Peekable::<Iter::<'a, (usize, Tokens<'a>)>>;
 
-const IFS: &'static [&'static str] = &[
-    "ifeq", "ifneq"
+pub const IFEQ:   &'static str = "ifeq";
+pub const IFNEQ:  &'static str = "ifneq";
+pub const IFDEF:  &'static str = "ifdef";
+pub const IFNDEF: &'static str = "ifndef";
+
+pub const IFS: &'static [&'static str] = &[
+    IFEQ, IFNEQ, IFDEF, IFNDEF,
 ];
 
-const EXPORT: &'static str = "export";
-const UNEXPORT: &'static str = "unexport";
+pub const EXPORT:   &'static str = "export";
+pub const UNEXPORT: &'static str = "unexport";
 
-const EXPORTS: &'static [&'static str] = &[
+pub const EXPORTS: &'static [&'static str] = &[
     EXPORT, UNEXPORT
 ];
 
 pub enum ErrorType {
+    NoLeftSide,
+    NoRightSide,
     NoClosingEndif,
     UnexpectedToken,
     JobWithoutTarget,
@@ -44,6 +51,8 @@ impl fmt::Display for ErrorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ErrorType::*;
         match self {
+            NoLeftSide => write!(f, "No left side"),
+            NoRightSide => write!(f, "No ligh side"),
             NoClosingEndif => write!(f, "No closing endif"),
             UnexpectedToken => write!(f, "Unexpected token"),
             ExportWithNoArgs => write!(f, "Export with no args"),
@@ -141,33 +150,33 @@ impl<'a> Parser<'a> {
     fn parse_eq(first: &'a Token, line: &'a Tokens, eq_idx: usize) -> Item<'a> {
         if let Some(token) = line.get(eq_idx - 1) {
             if token.str.eq("+") {
-                let Some(right_side) = line.get(eq_idx + 1) else {
+                if eq_idx + 1 >= line.len() {
                     panic!("Expected right side after expression")
-                };
-
+                }
                 let left_side = line.get(eq_idx - 2).unwrap();
+                let right_side = &line[eq_idx + 1..];
                 let expr = Expr::new(left_side, Operation::PlusEqual, right_side);
                 return Item::Expr(expr)
             } else if token.str.ends_with("+") {
-                let Some(right_side) = line.get(eq_idx + 1) else {
+                if eq_idx + 1 >= line.len() {
                     panic!("Expected right side after expression")
                 };
-
+                let right_side = &line[eq_idx + 1..];
                 let expr = Expr::new(token, Operation::PlusEqual, right_side);
                 return Item::Expr(expr)
             } else if token.str.eq("-") {
-                let Some(right_side) = line.get(eq_idx + 2) else {
+                if eq_idx + 1 >= line.len() {
                     panic!("Expected right side after expression")
                 };
-
+                let right_side = &line[eq_idx + 1..];
                 let left_side = line.get(eq_idx - 2).unwrap();
                 let expr = Expr::new(left_side, Operation::MinusEqual, right_side);
                 return Item::Expr(expr)
             } else if token.str.ends_with("-") {
-                let Some(right_side) = line.get(eq_idx + 1) else {
+                if eq_idx + 1 >= line.len() {
                     panic!("Expected right side after expression")
                 };
-
+                let right_side = &line[eq_idx + 1..];
                 let expr = Expr::new(token, Operation::MinusEqual, right_side);
                 return Item::Expr(expr)
             }
@@ -227,21 +236,24 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let keyword = iter.next().unwrap();
+        let keyword = iter.next();
         if !endif {
-            Self::report_err(Some(keyword), Error::new(NoClosingEndif, None));
+            Self::report_err(keyword, Error::new(NoClosingEndif, None));
         }
 
-        let rev = if first.str.eq("ifeq") { false } else { true };
-
+        let ifkind = IfKind::try_from(first.str).unwrap();
         let Some(left_side) = iter.next() else {
-            panic!("No left_side")
-        };
-        let Some(right_side) = iter.next() else {
-            panic!("No right_side")
+            Self::report_err(keyword, Error::new(NoLeftSide, None));
         };
 
-        let r#if = If::new(rev, left_side, right_side, body, else_body);
+        let right_side = if matches!(ifkind, IfKind::Eq | IfKind::Neq) {
+            let v = iter.next().unwrap_or_else(|| {
+                Self::report_err(keyword, Error::new(NoRightSide, None))
+            });
+            Some(v)
+        } else { None };
+
+        let r#if = If::new(ifkind, left_side, right_side, body, else_body);
         Item::If(r#if)
     }
 

@@ -17,16 +17,23 @@ ifeq #FOO, #FOO
     else
         BAR=HELLO
     endif
+
     #FOO+=BRATIK
 else
     BAR=BRATIK
 endif
 
+ifndef FOO
+    unexport FOO
+endif
+
+#FOO+=hello bratik
+
 out: test.c bar
     #CC #FLAGS -o $t $d
 
 foo: test.c
-    @echo FOO = $FOO
+    @echo FOO = #FOO
     @echo #BAR
     @echo "foo"
 
