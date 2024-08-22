@@ -147,37 +147,36 @@ impl<'a> Parser<'a> {
         }
     }
 
+    //                                          is token joint or not
+    //                                                    ^^
+    fn check_for_math(str: &str) -> Option::<(Operation, bool)> {
+        if        str.eq("+") {
+            Some((Operation::PlusEqual,  true))
+        } else if str.ends_with("+") {
+            Some((Operation::PlusEqual,  false))
+        } else if str.eq("-") {
+            Some((Operation::MinusEqual, true))
+        } else if str.ends_with("-") {
+            Some((Operation::MinusEqual, false))
+        } else { None }
+    }
+
     fn parse_eq(first: &'a Token, line: &'a Tokens, eq_idx: usize) -> Item<'a> {
         if let Some(token) = line.get(eq_idx - 1) {
-            if token.str.eq("+") {
-                if eq_idx + 1 >= line.len() {
-                    panic!("Expected right side after expression")
-                }
-                let left_side = line.get(eq_idx - 2).unwrap();
+            if eq_idx + 1 >= line.len() {
+                panic!("Expected right side after expression")
+            }
+
+            'blk: {
+                let Some(check) = Self::check_for_math(token.str) else { break 'blk };
                 let right_side = &line[eq_idx + 1..];
-                let expr = Expr::new(left_side, Operation::PlusEqual, right_side);
-                return Item::Expr(expr)
-            } else if token.str.ends_with("+") {
-                if eq_idx + 1 >= line.len() {
-                    panic!("Expected right side after expression")
+                let left_side = if check.1 {
+                    line.get(eq_idx - 2).unwrap()
+                } else {
+                    token
                 };
-                let right_side = &line[eq_idx + 1..];
-                let expr = Expr::new(token, Operation::PlusEqual, right_side);
-                return Item::Expr(expr)
-            } else if token.str.eq("-") {
-                if eq_idx + 1 >= line.len() {
-                    panic!("Expected right side after expression")
-                };
-                let right_side = &line[eq_idx + 1..];
-                let left_side = line.get(eq_idx - 2).unwrap();
-                let expr = Expr::new(left_side, Operation::MinusEqual, right_side);
-                return Item::Expr(expr)
-            } else if token.str.ends_with("-") {
-                if eq_idx + 1 >= line.len() {
-                    panic!("Expected right side after expression")
-                };
-                let right_side = &line[eq_idx + 1..];
-                let expr = Expr::new(token, Operation::MinusEqual, right_side);
+
+                let expr = Expr::new(left_side, check.0, right_side);
                 return Item::Expr(expr)
             }
         }
@@ -200,12 +199,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if(first: &Token, iter: &mut Peekable<Iter<'a, Token>>, iter2: &mut LinizedTokensIterator<'a>) -> Item<'a> {
-        use ErrorType::*;
+        use {
+            ErrorType::*,
+            TokenType::*
+        };
 
         let mut endif = false;
         let mut body = Vec::new();
         let (mut else_body, mut else_flag) = (Vec::new(), false);
-
         while let Some((_, line)) = iter2.next() {
             if line.iter().find(|t| t.str.eq("else")).is_some() {
                 else_flag = true;
@@ -219,11 +220,13 @@ impl<'a> Parser<'a> {
                 let item = if IFS.contains(&first.str) {
                     let mut iter = line.into_iter().peekable();
                     Self::parse_if(first, &mut iter, iter2)
-                } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, TokenType::Equal)) {
+                } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
                     let Some(first) = line.get(eq_idx - 1) else { continue };
                     Self::parse_eq(first, line, eq_idx)
                 } else if EXPORTS.contains(&first.str) {
                     Self::parse_export_unexport(first, line)
+                } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
+                    Self::parse_job(first, line, iter2, colon_idx)
                 } else {
                     todo!()
                 };
@@ -257,6 +260,24 @@ impl<'a> Parser<'a> {
         Item::If(r#if)
     }
 
+    fn parse_job(first: &'a Token, line: &'a Tokens, iter: &mut LinizedTokensIterator<'a>, colon_idx: usize) -> Item<'a> {
+        Self::check_token_pos(colon_idx, Some(first));
+
+        let target = first;
+        let dependencies = &line[colon_idx + 1..];
+        let mut body = Vec::with_capacity(line.len());
+        while let Some((wc, line)) = iter.peek() {
+            // If the amount of spaces before the token is zero, it means that body of the job is ended.
+            if wc.eq(&0) { break }
+
+            body.push(line);
+            iter.next();
+        }
+
+        let job = Job::new(target, dependencies, body);
+        Item::Job(job)
+    }
+
     fn parse_line(&mut self, _: &usize, line: &'a Tokens) {
         use {
             ErrorType::*,
@@ -268,7 +289,7 @@ impl<'a> Parser<'a> {
         if first.str.eq("endif") { return };
         match first.typ {
             Literal => if IFS.contains(&first.str) {
-                let item = Self::parse_if(first, &mut iter, &mut self.iter);
+                let item = Self::parse_if(&first, &mut iter, &mut self.iter);
                 self.items.push(item);
             } else if first.str.eq(EXPORT) {
                 collect_exports!(self, first, line, Export, ExportWithNoArgs);
@@ -278,19 +299,8 @@ impl<'a> Parser<'a> {
                 let item = Self::parse_eq(first, line, eq_idx);
                 self.items.push(item);
             } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
-                Self::check_token_pos(colon_idx, Some(first));
-
-                let target = first;
-                let dependencies = &line[colon_idx + 1..];
-                let mut body = Vec::with_capacity(line.len());
-                while let Some((wc, line)) = self.iter.peek() {
-                    if wc.eq(&0) { break }
-                    body.push(line);
-                    self.iter.next();
-                }
-
-                let job = Job::new(target, dependencies, body);
-                self.items.push(Item::Job(job));
+                let item = Self::parse_job(first, line, &mut self.iter, colon_idx);
+                self.items.push(item);
             } else {
                 Self::uft_err(line);
             },

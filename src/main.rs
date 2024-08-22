@@ -1,27 +1,17 @@
 mod parsing;
-use parsing::{
-    lexer::Lexer,
-    parser::Parser
-};
+use parsing::{lexer::Lexer, parser::Parser};
 
 mod execution;
 use execution::{
     flags::parse_flags,
-    cmd::{
-        Execute,
-        find_buildfile
-    },
+    cmd::{find_buildfile, Execute},
 };
 
 #[cfg(feature = "dbg")]
 use std::time::Instant;
-use std::{
-    env,
-    process::exit,
-    fs::read_to_string
-};
+use std::{env, fs::read_to_string, process::exit};
 
-fn main() -> std::io::Result::<()> {
+fn main() -> std::io::Result<()> {
     #[cfg(feature = "dbg")]
     {
         let start = Instant::now();

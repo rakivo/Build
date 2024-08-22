@@ -154,28 +154,28 @@ impl fmt::Display for ErrorType {
     }
 }
 
-impl fmt::Debug for Error {
+impl fmt::Debug for Error<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self, f)
     }
 }
 
-pub struct Error {
+pub struct Error<'a> {
     ty: ErrorType,
-    note: Option::<&'static str>,
+    note: Option::<&'a str>,
 }
 
-impl Error {
+impl<'a> Error<'a> {
     #[inline]
     pub fn new(ty: ErrorType,
-               note: Option::<&'static str>)
+               note: Option::<&'a str>)
        -> Self
     {
         Self { ty, note }
     }
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for Error<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ty = &self.ty;
         if let Some(note) = self.note {
@@ -185,9 +185,6 @@ impl fmt::Display for Error {
         }
     }
 }
-
-// pub type Export<'a> = Vec::<&'a Token<'a>>;
-// pub type Unexport<'a> = Vec::<&'a Token<'a>>;
 
 pub type Export<'a> = &'a [Token<'a>];
 pub type Unexport<'a> = &'a [Token<'a>];
@@ -305,7 +302,9 @@ pub struct Ast<'a> {
 impl<'a> Ast<'a> {
     const VARIABLE_SYMBOL: char = '#';
     const SPECIAL_NAMES: &'static [&'static str] = &[
-        "<", "@", "t", "d",
+        "<", "d",
+        "@", "t",
+        "^", "ds"
     ];
 
     #[track_caller]
@@ -467,16 +466,16 @@ impl<'a> Ast<'a> {
 
     fn process_item(&mut self, item: Item<'a>) {
         match item {
-            Item::If(r#if)   => self.process_if_tokens(r#if),
-            Item::Decl(decl) => self.eval_decl(decl),
-            Item::Expr(expr) => if expr.left_side.str.starts_with("#") {
+            Item::If(r#if)            => self.process_if_tokens(r#if),
+            Item::Decl(decl)          => self.eval_decl(decl),
+            Item::Job(job)            => self.parse_job(job),
+            Item::Export(exports)     => self.export_unexport(exports, false),
+            Item::Unexport(unexports) => self.export_unexport(unexports, true),
+            Item::Expr(expr)          => if expr.left_side.str.starts_with("#") {
                 self.parse_expr(&expr);
             } else {
                 panic!("In-place math expressions are not supported yet BRUH")
             }
-            Item::Job(job) => self.parse_job(job),
-            Item::Export(exports) => self.export_unexport(exports, false),
-            Item::Unexport(unexports) => self.export_unexport(unexports, true),
         }
     }
 
@@ -535,8 +534,8 @@ impl<'a> Ast<'a> {
             }
 
             if Self::SPECIAL_NAMES.contains(&name) {
-                match name.as_bytes()[0] {
-                    b'd' | b'<' => if matches!(section, Dependencies | Target) {
+                match name {
+                    "d" | "<" => if matches!(section, Dependencies | Target) {
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody,
                                                    Some("You can use \"$d\" and \"$<\" ONLY in body of job")), Some(token));
                     } else if let Some(dep) = curr_job.dependencies.unwrap().first() {
@@ -545,14 +544,24 @@ impl<'a> Ast<'a> {
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
                     },
 
-                    b't' | b'@' => if matches!(section, Target) {
+                    "ds" | "^" => if matches!(section, Dependencies | Target) {
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody,
+                                                   Some("You can use \"$d\" and \"$<\" ONLY in body of job")), Some(token));
+                    } else if !curr_job.dependencies.unwrap().is_empty() {
+                        curr_job.dependencies.unwrap().join(" ")
+                    } else {
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
+                    },
+
+                    "t" | "@" => if matches!(section, Target) {
                         self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection,
-                                                   Some("You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies")), Some(token));
+                                Some("You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies")), Some(token));
                     } else if let Some(target) = curr_job.target {
                         target.to_owned()
                     } else {
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
                     },
+
                     _ => unreachable!()
                 }
             } else if let Ok(value) = env::var(name) {
@@ -580,9 +589,9 @@ impl<'a> Ast<'a> {
         {
             let value = self.get_value(t, Dependencies, &curr_job);
             if target.eq(&value) {
-                let err = Error::new(JobDependsOnItself, None);
-                eprintln!("{t}: [ERROR] {err}\n\tNOTE: Job \"{target}\" depends on itself, so, infinite recursion detected");
-                exit(1)
+                let msg = format!("Job \"{target}\" depends on itself, so, infinite recursion detected");
+                let err = Error::new(JobDependsOnItself, Some(&msg));
+                self.report_err(err, Some(t));
             }
             deps.push(value);
             deps

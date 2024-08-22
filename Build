@@ -11,7 +11,7 @@ ifeq $VAR, $VAR
     export FOO
 endif
 
-ifeq #FOO, #FOO
+ifneq #FOO, #FOO
     ifeq 1, 2
         BAR=YAR
     else
@@ -19,8 +19,15 @@ ifeq #FOO, #FOO
     endif
 
     #FOO+=BRATIK
+
+hello: README.md
+    @echo $d
+
 else
-    BAR=BRATIK
+hello: foo
+    @echo $ds
+
+BAR=PRIVET
 endif
 
 ifndef FOO
@@ -29,10 +36,13 @@ endif
 
 #FOO+=hello bratik
 
-out: test.c bar
+BIN=out
+
+#BIN: test.c bar
     #CC #FLAGS -o $t $d
 
-foo: test.c
+foo: test.c Cargo.toml
+    @echo $ds
     @echo FOO = #FOO
     @echo #BAR
     @echo "foo"
