@@ -12,6 +12,8 @@ use std::{
     },
 };
 
+const BUILD_FILE_NAME: &'static str = "Buildfile";
+
 use crate::execution::flags::Flags;
 
 #[derive(Debug)]
@@ -38,9 +40,9 @@ pub struct Dir {
 }
 
 impl Dir {
-    pub fn new(root: PathBuf) -> Dir {
+    pub fn new(root: &PathBuf) -> Dir {
         Dir {
-            paths: if let Ok(entries) = read_dir::<PathBuf>(root) {
+            paths: if let Ok(entries) = read_dir::<&PathBuf>(root) {
                 entries.into_iter()
                     .filter_map(Result::ok)
                     .filter(|e| e.path().is_file())
@@ -64,10 +66,10 @@ impl IntoIterator for Dir {
 
 pub fn find_buildfile() -> std::io::Result::<PathBuf> {
     let dir_path = env::current_dir()?;
-    let buildfile = Dir::new(dir_path.to_owned()).into_iter()
-        .find(|f| matches!(f.file_name(), Some(name) if name == "Build"))
+    let buildfile = Dir::new(&dir_path).into_iter()
+        .find(|f| matches!(f.file_name(), Some(name) if name == BUILD_FILE_NAME))
         .unwrap_or_else(|| {
-            eprintln!("No `Build` found in {dir}", dir = dir_path.display());
+            println!("No `{BUILD_FILE_NAME}` found in {dir}", dir = dir_path.display());
             exit(1);
         });
 
@@ -125,7 +127,8 @@ impl Execute {
             if let Some(job) = self.jobs.iter().find(|j| j.target.eq(dep)) {
                 self.execute_job_if_needed(job);
             } else {
-                times.push(Self::get_last_modification_time(dep).unwrap());
+                let time = Self::get_last_modification_time(dep).unwrap();
+                times.push(time);
             } times
         });
 
@@ -135,9 +138,20 @@ impl Execute {
         times.into_iter().any(|dep_mod_time| dep_mod_time > target_mod_time)
     }
 
-    #[inline]
-    fn render_cmd(cmd: &[String]) -> String {
-        cmd.join(" ")
+    fn render_cmd(cmds: &[String]) -> String {
+        cmds.iter().enumerate().fold(String::new(), |mut ret, (i, cmd)| {
+            if !cmd.eq(&"=") && cmd.contains("=") {
+                let str = cmd.replace(" = ", "=");
+                ret.push_str(&str);
+                ret.push(' ');
+            } else {
+                ret.push_str(&cmd);
+                if !cmd.eq(&"=") && !matches!(cmds.get(i + 1), Some(c) if c.eq(&"=")) {
+                    ret.push(' ');
+                }
+            }
+            ret
+        })
     }
 
     pub const CMD_ARG:  &'static str = if cfg!(windows) {"cmd"} else {"sh"};
@@ -149,10 +163,13 @@ impl Execute {
         }
 
         for line in job.body.iter() {
-            let (rendered, silent) = if matches!(line.first(), Some(t) if t.eq("@")) {
-                (Self::render_cmd(&line[1..]), true)
-            } else { (Self::render_cmd(line), false) };
+            let silent = matches!(line.first(), Some(t) if t.starts_with("@"));
+            let mut line = line.to_owned();
+            if silent {
+                line[0] = line[0][1..].to_owned();
+            }
 
+            let rendered = Self::render_cmd(&line);
             if !self.flags.silent && !silent {
                 println!("{rendered}");
             }

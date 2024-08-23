@@ -20,7 +20,6 @@ pub enum TokenType {
     String,
     Literal,
 
-    At,
     Equal,
 
     Plus,
@@ -73,7 +72,7 @@ impl<'a> Token<'a> {
 pub struct Lexer<'a> {
     row: usize,
     iter: Lines<'a>,
-    file_path: &'a PathBuf
+    file_path: &'a PathBuf,
 }
 
 impl<'a> Lexer<'a> {
@@ -87,7 +86,10 @@ impl<'a> Lexer<'a> {
     pub fn lex_line(&mut self, line: ColStr<'a>, ts: &mut LinizedTokens<'a>) {
         use TokenType::*;
 
-        let (wc, strs) = Self::get_strs(line.1);
+        let (wc, strs) = {
+            Self::split_whitespace_preserve_indices(line.1)
+        };
+
         let len = strs.len();
         if len < 1 {
             self.row += 1;
@@ -125,10 +127,9 @@ impl<'a> Lexer<'a> {
                 } else { Plus },
                 b'{'  => LCurly,
                 b'}'  => RCurly,
-                b'@'  => At,
                 b':'  => Colon,
                 b'='  => Equal,
-                _     => Literal,
+                _ => Literal,
             };
 
             let loc = Loc(self.file_path, self.row, col);
@@ -147,36 +148,19 @@ impl<'a> Lexer<'a> {
         Ok(ts)
     }
 
-    // List of characters by which we split lines in the `get_strs`
-    const CHAR_LIST: &'static [char] = &[
-        '=', '{', '}', ':', '@', Self::COMMENT_SYMBOL as _
-    ];
-
-    // List of characters by which we split lines in the `get_strs`, but only if next character after the matched one is a whitespace
-    const SEMI_CHAR_LIST: &'static [char] = &[
-        '-', '+', '"', '\''
-    ];
-
-    fn get_strs(input: &str) -> (usize, IntoIter::<ColStr>) {
+    fn split_whitespace_preserve_indices(input: &str) -> (usize, IntoIter::<(usize, &str)>) {
         let (s, e, mut ret) = input.char_indices().fold((0, 0, Vec::with_capacity(input.len())),
             |(s, e, mut ret), (i, c)|
         {
-            let isw = c.is_whitespace();
-            if isw || Self::CHAR_LIST.contains(&c) || {
-                Self::SEMI_CHAR_LIST.contains(&c)
-                && matches! {
-                    input.chars().nth(i + 1), Some(c) if Self::SEMI_CHAR_LIST.contains(&c)
-                }
-            } {
+            let iss = c.eq(&'=') || c.eq(&':');
+            if c.is_whitespace() || iss {
                 if s != i {
                     ret.push((s, &input[s..i]));
                 }
-                if isw {
-                    (i + c.len_utf8(), e, ret)
-                } else {
-                    ret.push((i, &input[i..i + c.len_utf8()]));
-                    (i + c.len_utf8(), e, ret)
+                if iss {
+                    ret.push((s + 1, &input[i..=i]));
                 }
+                (i + c.len_utf8(), e, ret)
             } else {
                 (s, i + c.len_utf8(), ret)
             }
