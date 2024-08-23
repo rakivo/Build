@@ -1,6 +1,6 @@
 use crate::{
     parsing::{
-        lexer::{Token, Tokens},
+        lexer::{Loc, Token, Tokens},
         parser::{
             IFEQ, IFNEQ,
             IFDEF, IFNDEF,
@@ -355,54 +355,46 @@ impl<'a> Ast<'a> {
     }
 
     #[inline]
-    fn get_value_panic(&self, token: &'a Token) -> (String, bool) {
+    fn get_value_panic(&self, token: &'a Token) -> (Vec::<String>, bool) {
         use ErrorType::*;
         match self.get_value_(token) {
-            (Some(str), false) => (str, false),
-            (Some(str), true)  => (str, true),
+            (Some(v), false) => (v, false),
+            (Some(v), true)  => (v, true),
 
-            (None,      false) => self.report_err(Error::new(UndefinedVariable, None), Some(token)),
-            (None,      true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token)),
+            (None,    false) => self.report_err(Error::new(UndefinedVariable, None), Some(token)),
+            (None,    true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token)),
         }
     }
 
-    fn get_value_(&self, token: &'a Token) -> (Option::<String>, bool) {
+    fn get_value_(&self, token: &'a Token) -> (Option::<Vec::<String>>, bool) {
         use ErrorType::*;
 
-        let trimmed = if token.str.ends_with(",") {
+        let name = if token.str.ends_with(",") {
             &token.str[..token.str.len() - 1]
         } else {
             &token.str
         };
 
         if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            if trimmed[1..].is_empty() {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token));
-            }
-
-            if let Some(value) = self.vars.get(&trimmed[1..]) {
-                (Some(value.join(" ")), false)
-            } else {
-                (None, false)
-            }
+            (Some(self.get_value__(name, &token.loc)), false)
         } else if token.str.starts_with("$") {
-            if trimmed[1..].is_empty() {
+            if name[1..].is_empty() {
                 self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
             }
 
-            if let Ok(value) = env::var(&trimmed[1..]) {
-                (Some(value), true)
+            if let Ok(value) = env::var(&name[1..]) {
+                (Some(vec![value]), true)
             } else {
                 (None, true)
             }
         } else {
-            (Some(trimmed.to_owned()), false)
+            (Some(vec![name.to_owned()]), false)
         }
     }
 
     #[inline]
-    fn get_name(token: &Token) -> String {
-        token.str[1..].chars()
+    fn get_name(token: &str) -> String {
+        token.chars()
             .take_while(|c| c.is_alphabetic() || c.eq(&'_'))
             .collect::<String>()
     }
@@ -421,7 +413,7 @@ impl<'a> Ast<'a> {
                 continue
             }
 
-            let name = Self::get_name(token);
+            let name = Self::get_name(&token.str[1..]);
             if name.is_empty() {
                 self.report_err(Error::new(UndefinedVariable, None), Some(token));
             }
@@ -445,7 +437,7 @@ impl<'a> Ast<'a> {
             &expr.left_side.str[1..]
         };
 
-        let mut value = Vec::<String>::new();
+        let mut value = Vec::new();
         for token in expr.right_side {
             if token.str.starts_with("#") {
                 if let Some(v) = self.vars.get(&token.str[1..]) {
@@ -508,7 +500,7 @@ impl<'a> Ast<'a> {
 
     #[inline]
     #[track_caller]
-    fn unwrap_value(&self, v: Option::<String>, errt: Option::<&Token>) -> String {
+    fn unwrap_value<T>(&self, v: Option::<T>, errt: Option::<&Token>) -> T {
         v.unwrap_or_else(|| {
             self.report_err(Error::new(ErrorType::UndefinedVariable, None), errt)
         })
@@ -520,14 +512,14 @@ impl<'a> Ast<'a> {
             IfKind::Eq | IfKind::Neq => {
                 let lv = self.unwrap_value(lv, Some(r#if.left_side));
                 let rv = self.get_value_panic(unsafe { r#if.right_side.unwrap_unchecked() }).0;
-                lv.trim().eq(rv.trim())
+                lv.eq(&rv)
             }
             IfKind::Def | IfKind::Ndef => {
                 if lv.is_none() {
                     false
                 } else if r#if.left_side.str.starts_with(Self::VARIABLE_SYMBOL) {
                     let lv = self.unwrap_value(lv, Some(r#if.left_side));
-                    self.vars.contains_key(&lv.as_str())
+                    !lv.into_iter().any(|x| !self.vars.contains_key(x.as_str()))
                 } else {
                     is_env
                 }
@@ -542,7 +534,7 @@ impl<'a> Ast<'a> {
         }
     }
 
-    fn concat_tokens(name: &String, token: &'a Token, tokens: &mut Vec::<String>) {
+    fn concat_tokens(name: &str, token: &'a Token, tokens: &mut Vec::<String>) {
         let idx_ = name.len() + 1;
         let idx = if matches!(token.str.chars().nth(idx_), Some(c) if c.eq(&'#')) {
             idx_ + 1
@@ -555,27 +547,59 @@ impl<'a> Ast<'a> {
         }
     }
 
-    fn get_value(&self, token: &'a Token<'a>, section: ParsingSection, curr_job: &CurrJob) -> Vec::<String> {
+    fn get_value__(&self, str: &'a str, loc: &Loc) -> Vec::<String> {
+        let mut last_pos = 0;
+        let mut ret = str.split('#')
+            .into_iter()
+            .fold((Vec::<String>::new(), 0), |(mut ret, count), name|
+        // I have this count here to keep track of whether I am processing a variable or concatenating tokens.
+        // In cases like: `echo #SRC_DIR##BIN_FILE#concat`, this function will output you the values of the two variables, which are `SRC_DIR` and `BIN_FILE`, the first `#` indicates the end of the first variable's name, and the second one indicates the start of another variable. If you didn't have the second `#`, the tokens following it would be treated as regular tokens, rather than a name of the variable.
+        // The counter works the following way: If the current string is empty or it is a variable, you increment the counter, this lets you know whether to treat the tokens as tokens or as variable name.
+        {
+            if name.is_empty() { return (ret, count + 1) }
+
+            let name = Self::get_name(name);
+            last_pos += name.len() + 1;
+            if count & 1 == 0 {
+                unsafe { ret.last_mut().unwrap_unchecked() }.push_str(&name);
+                return (ret, count)
+            }
+
+            if let Some(value) = self.vars.get(name.as_str()) {
+                let tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
+                if let Some(last) = ret.last_mut() {
+                    last.push_str(&tokens.join(" "));
+                } else {
+                    ret.extend(tokens);
+                }
+                (ret, count + 1)
+            } else {
+                panic!("{loc}: [ERROR] Undefined variable")
+            }
+        }).0;
+
+        if last_pos + 1 < str.len() {
+            let s = &str[last_pos..];
+            if let Some(last) = ret.last_mut() {
+                last.push_str(s);
+            } else {
+                ret.push(s.to_owned());
+            }
+        }
+
+        ret
+    }
+
+    fn get_value_for_job(&self, token: &'a Token<'a>, section: ParsingSection, curr_job: &CurrJob) -> Vec::<String> {
         use {
             ErrorType::*,
             ParsingSection::*,
         };
 
         if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            let name = Self::get_name(token);
-            if name.is_empty() {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token));
-            }
-
-            if let Some(value) = self.vars.get(name.as_str()) {
-                let mut tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
-                Self::concat_tokens(&name, token, &mut tokens);
-                tokens
-            } else {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token))
-            }
+            self.get_value__(token.str, &token.loc)
         } else if token.str.starts_with('$') {
-            let name = Self::get_name(token);
+            let name = Self::get_name(&token.str[1..]);
             if name.is_empty() {
                 self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
             }
@@ -628,13 +652,13 @@ impl<'a> Ast<'a> {
         };
 
         let mut curr_job = CurrJob::default();
-        let target = self.get_value(job.target, Target, &curr_job).join(" ");
+        let target = self.get_value_for_job(job.target, Target, &curr_job).join(" ");
         curr_job.target = Some(&target);
 
         let deps = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
             |mut deps, t|
         {
-            let value = self.get_value(t, Dependencies, &curr_job);
+            let value = self.get_value_for_job(t, Dependencies, &curr_job);
             if value.iter().any(|s| target.eq(s)) {
                 let msg = format!("Job \"{target}\" depends on itself, so, infinite recursion detected");
                 let err = Error::new(JobDependsOnItself, Some(&msg));
@@ -650,7 +674,7 @@ impl<'a> Ast<'a> {
 
         curr_job.dependencies = Some(&deps);
         let body = job.body.into_iter().fold(Vec::new(), |mut body, line| {
-            let mut line = line.iter().map(|t| self.get_value(t, Body, &curr_job).join(" ")).collect();
+            let mut line = line.iter().map(|t| self.get_value_for_job(t, Body, &curr_job).join(" ")).collect();
             let silent = is_line_silent(&line);
             if silent {
                 line[0] = line[0][1..].to_owned();

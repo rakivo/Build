@@ -12,9 +12,9 @@ use std::{
     },
 };
 
-const BUILD_FILE_NAME: &'static str = "Buildfile";
-
 use crate::execution::flags::Flags;
+
+const BUILD_FILE_NAME: &'static str = "Buildfile";
 
 pub type Body = Vec::<(bool, Vec::<String>)>;
 
