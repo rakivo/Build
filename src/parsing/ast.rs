@@ -91,6 +91,7 @@ impl fmt::Display for Expr<'_> {
     }
 }
 
+
 #[derive(Debug)]
 pub struct Job<'a> {
     target: &'a Token<'a>,
@@ -643,9 +644,18 @@ impl<'a> Ast<'a> {
             deps
         });
 
+        fn is_line_silent(line: &Vec::<String>) -> bool {
+            matches!(line.first(), Some(t) if t.starts_with("@"))
+        }
+
         curr_job.dependencies = Some(&deps);
-        let body = job.body.iter().fold(Vec::new(), |mut body, line| {
-            body.push(line.iter().map(|t| self.get_value(t, Body, &curr_job).join(" ")).collect::<Vec::<_>>());
+        let body = job.body.into_iter().fold(Vec::new(), |mut body, line| {
+            let mut line = line.iter().map(|t| self.get_value(t, Body, &curr_job).join(" ")).collect();
+            let silent = is_line_silent(&line);
+            if silent {
+                line[0] = line[0][1..].to_owned();
+            }
+            body.push((silent, line));
             body
         });
 

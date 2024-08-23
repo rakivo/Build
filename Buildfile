@@ -11,6 +11,7 @@ ifdef $DEBUG
 endif
 
 #BIN_FILE: #SRC_DIR/main.rs #PARSING_FILES #EXECUTING_FILES
+    @echo hello
     rustc -o $t $d #RUST_FLAGS -g
 
 clean:

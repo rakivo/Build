@@ -16,18 +16,20 @@ const BUILD_FILE_NAME: &'static str = "Buildfile";
 
 use crate::execution::flags::Flags;
 
+pub type Body = Vec::<(bool, Vec::<String>)>;
+
 #[derive(Debug)]
 pub struct Job {
     pub target: String,
     pub dependencies: Vec::<String>,
-    body: Vec::<Vec::<String>>
+    body: Body
 }
 
 impl Job {
     #[inline]
     pub fn new(target: String,
                dependencies: Vec::<String>,
-               body: Vec::<Vec::<String>>)
+               body: Body)
         -> Self
     {
         Self { target, dependencies, body }
@@ -139,18 +141,11 @@ impl Execute {
         times.into_iter().any(|dep_mod_time| dep_mod_time > target_mod_time)
     }
 
+    #[inline]
     fn render_cmd(cmds: &[String]) -> String {
-        cmds.iter().enumerate().fold(String::new(), |mut ret, (i, cmd)| {
-            if !cmd.eq(&"=") && cmd.contains("=") {
-                let str = cmd.replace(" = ", "=");
-                ret.push_str(&str);
-                ret.push(' ');
-            } else {
-                ret.push_str(&cmd);
-                if !cmd.eq(&"=") && !matches!(cmds.get(i + 1), Some(c) if c.eq(&"=")) {
-                    ret.push(' ');
-                }
-            }
+        cmds.iter().fold(String::new(), |mut ret, cmd| {
+            ret.push_str(&cmd.replace(" = ", "="));
+            ret.push(' ');
             ret
         })
     }
@@ -163,13 +158,7 @@ impl Execute {
             return Self::nothing_to_do_for(&job.target)
         }
 
-        for line in job.body.iter() {
-            let silent = matches!(line.first(), Some(t) if t.starts_with("@"));
-            let mut line = line.to_owned();
-            if silent {
-                line[0] = line[0][1..].to_owned();
-            }
-
+        for (silent, line) in job.body.iter() {
             let rendered = Self::render_cmd(&line);
             if !self.flags.silent && !silent {
                 println!("{rendered}");
