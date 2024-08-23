@@ -59,6 +59,7 @@ impl IntoIterator for Dir {
     type Item = PathBuf;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.paths.into_iter()
     }
@@ -134,7 +135,7 @@ impl Execute {
 
         if !Self::path_exists(&job.target) { return true }
 
-        let target_mod_time = Self::get_last_modification_time(&job.target).unwrap();
+        let target_mod_time = unsafe { Self::get_last_modification_time(&job.target).unwrap_unchecked() };
         times.into_iter().any(|dep_mod_time| dep_mod_time > target_mod_time)
     }
 

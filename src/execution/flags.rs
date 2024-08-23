@@ -16,7 +16,7 @@ pub struct Flags {
 pub fn parse_flags() -> Flags {
     let parser = Parser::new();
 
-    let help_flag: Flag::<bool>        = new_flag!("-h", "--help", "help flag");
+    let help_flag: Flag::<bool> = new_flag!("-h", "--help", "help flag");
 
     let job_flag:       Flag::<String> = new_flag!("-j", "--job", "name of a specific job to execute");
     let env_dir_flag:   Flag::<String> = new_flag!("-C", "--directory", "path to a specific directory to `cd` into before executing jobs");
@@ -36,10 +36,10 @@ pub fn parse_flags() -> Flags {
     }
 
     Flags {
-        job: parser.parse(&job_flag),
-        env_dir: parser.parse(&env_dir_flag),
-        phony: parser.passed(&phony_flag),
-        silent: parser.passed(&silent_flag),
+        job:       parser.parse(&job_flag),
+        env_dir:   parser.parse(&env_dir_flag),
+        phony:     parser.passed(&phony_flag),
+        silent:    parser.passed(&silent_flag),
         keepgoing: parser.passed(&keepgoing_flag),
     }
 }

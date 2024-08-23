@@ -86,9 +86,7 @@ impl<'a> Lexer<'a> {
     pub fn lex_line(&mut self, line: ColStr<'a>, ts: &mut LinizedTokens<'a>) {
         use TokenType::*;
 
-        let (wc, strs) = {
-            Self::split_whitespace_preserve_indices(line.1)
-        };
+        let (wc, strs) = Self::split_whitespace_preserve_indices(line.1);
 
         let len = strs.len();
         if len < 1 {
@@ -98,7 +96,7 @@ impl<'a> Lexer<'a> {
 
         let mut iter = strs.into_iter().peekable();
 
-        // Line starts comment, skipping
+        // The whole line is a comment
         if matches!(iter.peek(), Some((.., s)) if s.bytes().next().eq(&Some(Self::COMMENT_SYMBOL))) {
             self.row += 1;
             return
@@ -110,25 +108,23 @@ impl<'a> Lexer<'a> {
             let Some(first) = bytes.next() else { continue };
             let second = bytes.next();
             let tt = match first {
-                // Comment started, can happen if you do that:
-                // FLAGS=-f 69 # comment here
-                Self::COMMENT_SYMBOL  => {
-                    ts.push((wc, line_ts));
-                    self.row += 1;
-                    return
-                },
                 b'\'' => Char,
                 b'"'  => String,
+                b'{'  => LCurly,
+                b'}'  => RCurly,
+                b':'  => Colon,
+                b'='  => Equal,
                 b'-'  => if second.eq(&Some(b'=')) {
                     MinusEqual
                 } else { Minus },
                 b'+'  => if second.eq(&Some(b'=')) {
                     PlusEqual
                 } else { Plus },
-                b'{'  => LCurly,
-                b'}'  => RCurly,
-                b':'  => Colon,
-                b'='  => Equal,
+                Self::COMMENT_SYMBOL => {
+                    ts.push((wc, line_ts));
+                    self.row += 1;
+                    return
+                },
                 _ => Literal,
             };
 
@@ -148,11 +144,13 @@ impl<'a> Lexer<'a> {
         Ok(ts)
     }
 
-    fn split_whitespace_preserve_indices(input: &str) -> (usize, IntoIter::<(usize, &str)>) {
+    const SPLIT_CHARS: &'static [char] = &['=', ':'];
+
+    fn split_whitespace_preserve_indices(input: &str) -> (usize, IntoIter::<ColStr>) {
         let (s, e, mut ret) = input.char_indices().fold((0, 0, Vec::with_capacity(input.len())),
             |(s, e, mut ret), (i, c)|
         {
-            let iss = c.eq(&'=') || c.eq(&':');
+            let iss = Self::SPLIT_CHARS.contains(&c);
             if c.is_whitespace() || iss {
                 if s != i {
                     ret.push((s, &input[s..i]));

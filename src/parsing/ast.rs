@@ -1,12 +1,9 @@
 use crate::{
     parsing::{
+        lexer::{Token, Tokens},
         parser::{
             IFEQ, IFNEQ,
             IFDEF, IFNDEF,
-        },
-        lexer::{
-            Token,
-            Tokens
         },
     },
     execution::cmd::{
@@ -82,6 +79,7 @@ impl<'a> Expr<'a> {
 }
 
 impl fmt::Debug for Expr<'_> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self, f)
     }
@@ -154,6 +152,7 @@ impl fmt::Display for ErrorType {
 }
 
 impl fmt::Debug for Error<'_> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self, f)
     }
@@ -248,6 +247,7 @@ pub struct If<'a> {
 }
 
 impl<'a> If<'a> {
+    #[inline]
     pub fn new(kind: IfKind,
                left_side: &'a Token<'a>,
                right_side: Option::<&'a Token<'a>>,
@@ -260,6 +260,7 @@ impl<'a> If<'a> {
 }
 
 impl fmt::Debug for If<'_> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
@@ -269,7 +270,7 @@ impl fmt::Display for If<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let r#if = self.kind.to_string();
         match self.kind {
-            IfKind::Eq  | IfKind::Neq   => writeln!(f, "{if} {l} {r}", l = self.left_side.str, r = self.right_side.unwrap().str)?,
+            IfKind::Eq  | IfKind::Neq   => writeln!(f, "{if} {l} {r}", l = self.left_side.str, r = unsafe { self.right_side.unwrap_unchecked() }.str)?,
             IfKind::Def | IfKind::Ndef  => writeln!(f, "{if} {l}",     l = self.left_side.str)?,
         };
 
@@ -299,7 +300,7 @@ pub struct Ast<'a> {
 
 impl<'a> Ast<'a> {
     const VARIABLE_SYMBOL: char = '#';
-    const SPECIAL_NAMES: &'static [&'static str] = &[
+    const PATTERNS: &'static [&'static str] = &[
         "<", "d",
         "@", "t",
         "^", "ds"
@@ -352,41 +353,19 @@ impl<'a> Ast<'a> {
         false
     }
 
+    #[inline]
     fn get_value_panic(&self, token: &'a Token) -> (String, bool) {
         use ErrorType::*;
+        match self.get_value_(token) {
+            (Some(str), false) => (str, false),
+            (Some(str), true)  => (str, true),
 
-        let trimmed = if token.str.ends_with(",") {
-            &token.str[..token.str.len() - 1]
-        } else {
-            &token.str
-        };
-
-        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            if trimmed[1..].is_empty() {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token));
-            }
-
-            if let Some(value) = self.vars.get(&trimmed[1..]) {
-                (value.join(" "), false)
-            } else {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token))
-            }
-        } else if token.str.starts_with("$") {
-            if trimmed[1..].is_empty() {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
-            }
-
-            if let Ok(value) = env::var(&trimmed[1..]) {
-                (value, true)
-            } else {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token))
-            }
-        } else {
-            (trimmed.to_owned(), false)
+            (None,      false) => self.report_err(Error::new(UndefinedVariable, None), Some(token)),
+            (None,      true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token)),
         }
     }
 
-    fn get_value_(&self, token: &'a Token, exit: bool) -> (Option::<String>, bool) {
+    fn get_value_(&self, token: &'a Token) -> (Option::<String>, bool) {
         use ErrorType::*;
 
         let trimmed = if token.str.ends_with(",") {
@@ -403,7 +382,7 @@ impl<'a> Ast<'a> {
             if let Some(value) = self.vars.get(&trimmed[1..]) {
                 (Some(value.join(" ")), false)
             } else {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token))
+                (None, false)
             }
         } else if token.str.starts_with("$") {
             if trimmed[1..].is_empty() {
@@ -412,8 +391,6 @@ impl<'a> Ast<'a> {
 
             if let Ok(value) = env::var(&trimmed[1..]) {
                 (Some(value), true)
-            } else if exit {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token))
             } else {
                 (None, true)
             }
@@ -422,6 +399,7 @@ impl<'a> Ast<'a> {
         }
     }
 
+    #[inline]
     fn get_name(token: &Token) -> String {
         token.str[1..].chars()
             .take_while(|c| c.is_alphabetic() || c.eq(&'_'))
@@ -516,7 +494,7 @@ impl<'a> Ast<'a> {
             Item::Expr(expr)          => if expr.left_side.str.starts_with("#") {
                 self.parse_expr(&expr);
             } else {
-                panic!("In-place math expressions are not supported yet BRUH")
+                panic!("In-place math expressions are not supported yet BRUH, or probably you forgot to put a `#` thingy")
             }
         }
     }
@@ -527,40 +505,39 @@ impl<'a> Ast<'a> {
         }
     }
 
+    #[inline]
+    #[track_caller]
+    fn unwrap_value(&self, v: Option::<String>, errt: Option::<&Token>) -> String {
+        v.unwrap_or_else(|| {
+            self.report_err(Error::new(ErrorType::UndefinedVariable, None), errt)
+        })
+    }
+
     fn parse_if(&self, r#if: If<'a>) -> Vec::<Item<'a>> {
-        let (lv, is_env) = self.get_value_(r#if.left_side, false);
-        match r#if.kind {
+        let (lv, is_env) = self.get_value_(r#if.left_side);
+        let bool = match r#if.kind {
             IfKind::Eq | IfKind::Neq => {
-                let lv = lv.unwrap_or_else(|| {
-                    self.report_err(Error::new(ErrorType::UndefinedVariable, None), Some(r#if.left_side))
-                });
-                let rv = self.get_value_panic(r#if.right_side.unwrap()).0;
-                let mut bool = lv.trim().eq(rv.trim());
-                if matches!(r#if.kind, IfKind::Neq) { bool = !bool; };
-                if bool {
-                    r#if.body
-                } else {
-                    r#if.else_body
-                }
+                let lv = self.unwrap_value(lv, Some(r#if.left_side));
+                let rv = self.get_value_panic(unsafe { r#if.right_side.unwrap_unchecked() }).0;
+                lv.trim().eq(rv.trim())
             }
             IfKind::Def | IfKind::Ndef => {
-                let mut bool = if lv.is_none() {
+                if lv.is_none() {
                     false
                 } else if r#if.left_side.str.starts_with(Self::VARIABLE_SYMBOL) {
-                    let lv = lv.unwrap_or_else(|| {
-                        self.report_err(Error::new(ErrorType::UndefinedVariable, None), Some(r#if.left_side))
-                    });
+                    let lv = self.unwrap_value(lv, Some(r#if.left_side));
                     self.vars.contains_key(&lv.as_str())
                 } else {
                     is_env
-                };
-                if matches!(r#if.kind, IfKind::Ndef) { bool = !bool; };
-                if bool {
-                    r#if.body
-                } else {
-                    r#if.else_body
                 }
             }
+        };
+
+        let bool = if matches!(r#if.kind, IfKind::Neq | IfKind::Ndef) { !bool } else { bool };
+        if bool {
+            r#if.body
+        } else {
+            r#if.else_body
         }
     }
 
@@ -602,12 +579,12 @@ impl<'a> Ast<'a> {
                 self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
             }
 
-            if Self::SPECIAL_NAMES.contains(&name.as_str()) {
+            if Self::PATTERNS.contains(&name.as_str()) {
                 match name.as_str() {
                     "d" | "<" => if matches!(section, Dependencies | Target) {
                         let msg = "You can use \"$d\" and \"$<\" ONLY in body of job";
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(token));
-                    } else if let Some(dep) = curr_job.dependencies.unwrap().first() {
+                    } else if let Some(dep) = unsafe { curr_job.dependencies.unwrap_unchecked() }.first() {
                         vec![dep.to_string()]
                     } else {
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
@@ -616,7 +593,7 @@ impl<'a> Ast<'a> {
                     "ds" | "^" => if matches!(section, Dependencies | Target) {
                         let msg = "You can use \"$d\" and \"$<\" ONLY in body of job";
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(token));
-                    } else if !curr_job.dependencies.unwrap().is_empty() {
+                    } else if !unsafe { curr_job.dependencies.unwrap_unchecked() }.is_empty() {
                         curr_job.dependencies.unwrap().iter().map(ToString::to_string).collect()
                     } else {
                         self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));

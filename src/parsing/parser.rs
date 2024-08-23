@@ -52,7 +52,7 @@ impl fmt::Display for ErrorType {
         use ErrorType::*;
         match self {
             NoLeftSide => write!(f, "No left side"),
-            NoRightSide => write!(f, "No ligh side"),
+            NoRightSide => write!(f, "No right side"),
             NoClosingEndif => write!(f, "No closing endif"),
             UnexpectedToken => write!(f, "Unexpected token"),
             ExportWithNoArgs => write!(f, "Export with no args"),
@@ -93,7 +93,7 @@ macro_rules! collect_exports {
     ($self: expr, $first: expr, $line: expr, $vty: tt, $errty: expr) => {{
         let item = &$line[1..];
         if item.is_empty() {
-            Self::report_err(Some($first), Error::new($errty, None));
+            Self::report_err(Error::new($errty, None), Some($first));
         }
         $self.items.push(Item::$vty(item));
     }};
@@ -115,8 +115,9 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     #[track_caller]
-    fn report_err(err_token: Option::<&Token>, err: Error) -> ! {
+    fn report_err(err: Error, err_token: Option::<&Token>) -> ! {
         if let Some(errt) = err_token {
             panic!("{errt}: [ERROR] {err}")
         } else {
@@ -128,7 +129,7 @@ impl<'a> Parser<'a> {
     #[inline]
     #[track_caller]
     fn uft_err(line: &'a Tokens) -> ! {
-        Self::report_err(line.get(0), Error::new(ErrorType::UnexpectedToken, None))
+        Self::report_err(Error::new(ErrorType::UnexpectedToken, None), line.get(0))
     }
 
     // To check token that we have only one token on the left side in these kinda situations:
@@ -143,12 +144,13 @@ impl<'a> Parser<'a> {
     #[inline]
     fn check_token_pos(pos: usize, token: Option::<&'a Token<'a>>) {
         if pos > 1 {
-            Self::report_err(token, Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None))
+            Self::report_err(Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None), token)
         }
     }
 
     //                                          is token joint or not
     //                                                    ^^
+    #[inline]
     fn check_for_math(str: &str) -> Option::<(Operation, bool)> {
         if        str.eq("+") {
             Some((Operation::PlusEqual,  true))
@@ -171,7 +173,11 @@ impl<'a> Parser<'a> {
                 let Some(check) = Self::check_for_math(token.str) else { break 'blk };
                 let right_side = &line[eq_idx + 1..];
                 let left_side = if check.1 {
-                    line.get(eq_idx - 2).unwrap()
+                    // SAFETY: It is guaranteed that there's something, because you get into this `if` statement only if you already have a literal, a space, a plus/minus and an equal sign, we don't count the space thing, so you have something like that:
+                    // [`variable`, `plus/minus sign`, `equal sign`]
+                    //      0                1               2
+                    // And if we offset eq_idx by 2, we eventually get the guaranteed variable name.
+                    unsafe { line.get(eq_idx - 2).unwrap_unchecked() }
                 } else {
                     token
                 };
@@ -189,6 +195,7 @@ impl<'a> Parser<'a> {
         Item::Decl(decl)
     }
 
+    #[inline]
     fn parse_export_unexport(first: &'a Token, line: &'a Tokens) -> Item<'a> {
         let exports = &line[1..];
         if first.str.eq(EXPORT) {
@@ -241,17 +248,19 @@ impl<'a> Parser<'a> {
 
         let keyword = iter.next();
         if !endif {
-            Self::report_err(keyword, Error::new(NoClosingEndif, None));
+            Self::report_err(Error::new(NoClosingEndif, None), keyword);
         }
 
-        let ifkind = IfKind::try_from(first.str).unwrap();
+        // SAFETY: It is guaranteed that `first.str` is actually an if keyword, because
+        //           you get into this function only if you have a literal, and if `IFS` contains `literal.str`.
+        let ifkind = unsafe { IfKind::try_from(first.str).unwrap_unchecked() };
         let Some(left_side) = iter.next() else {
-            Self::report_err(keyword, Error::new(NoLeftSide, None));
+            Self::report_err(Error::new(NoLeftSide, None), keyword);
         };
 
         let right_side = if matches!(ifkind, IfKind::Eq | IfKind::Neq) {
             let v = iter.next().unwrap_or_else(|| {
-                Self::report_err(keyword, Error::new(NoRightSide, None))
+                Self::report_err(Error::new(NoRightSide, None), keyword)
             });
             Some(v)
         } else { None };
@@ -305,8 +314,9 @@ impl<'a> Parser<'a> {
                 Self::uft_err(line);
             },
             Colon => {
-                let err = Error::new(JobWithoutTarget, Some("Jobs without targets are not allowed here!"));
-                Self::report_err(Some(first), err);
+                let msg = "Jobs without targets are not allowed here!";
+                let err = Error::new(JobWithoutTarget, Some(msg));
+                Self::report_err(err, Some(first));
             }
             _ => Self::uft_err(line)
         };
