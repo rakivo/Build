@@ -556,7 +556,10 @@ impl<'a> Ast<'a> {
         // In cases like: `echo #SRC_DIR##BIN_FILE#concat`, this function will output you the values of the two variables, which are `SRC_DIR` and `BIN_FILE`, the first `#` indicates the end of the first variable's name, and the second one indicates the start of another variable. If you didn't have the second `#`, the tokens following it would be treated as regular tokens, rather than a name of the variable.
         // The counter works the following way: If the current string is empty or it is a variable, you increment the counter, this lets you know whether to treat the tokens as tokens or as variable name.
         {
-            if name.is_empty() { return (ret, count + 1) }
+            if name.is_empty() {
+                last_pos += 1;
+                return (ret, count + 1)
+            }
 
             let name = Self::get_name(name);
             last_pos += name.len() + 1;
@@ -579,7 +582,7 @@ impl<'a> Ast<'a> {
         }).0;
 
         if last_pos + 1 < str.len() {
-            let s = &str[last_pos..];
+            let s = &str[last_pos - 1..];
             if let Some(last) = ret.last_mut() {
                 last.push_str(s);
             } else {
