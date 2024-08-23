@@ -18,7 +18,6 @@ use crate::{
 use std::{
     env,
     fmt,
-    mem::take,
     process::exit,
     collections::{HashMap, HashSet}
 };
@@ -486,9 +485,7 @@ impl<'a> Ast<'a> {
 
         match expr.operation {
             Operation::PlusEqual  => decl.extend(value),
-            Operation::MinusEqual => *decl = take(decl).into_iter().filter(|token| {
-                expr.right_side.iter().any(|t| &t.str != token)
-            }).collect::<Vec::<_>>(),
+            Operation::MinusEqual => decl.retain(|s| !expr.right_side.iter().any(|t| t.str.eq(s))),
             _ => todo!()
         }
     }
