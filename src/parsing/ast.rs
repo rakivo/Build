@@ -1,10 +1,10 @@
 use crate::{
     parsing::{
-        lexer::{Loc, Token, Tokens},
-        parser::{
-            IFEQ, IFNEQ,
-            IFDEF, IFNDEF,
-        },
+        lexer::{Loc, Token,
+                Tokens, TokenType},
+
+        parser::{IFEQ, IFNEQ,
+                 IFDEF, IFNDEF},
     },
     execution::cmd::{
         Jobs,
@@ -94,14 +94,14 @@ impl fmt::Display for Expr<'_> {
 
 #[derive(Debug)]
 pub struct Job<'a> {
-    target: &'a Token<'a>,
+    target: &'a [Token<'a>],
     dependencies: &'a [Token<'a>],
     body: Vec::<&'a Tokens<'a>>
 }
 
 impl<'a> Job<'a> {
     #[inline]
-    pub fn new(target: &'a Token<'a>,
+    pub fn new(target: &'a [Token<'a>],
                dependencies: &'a [Token<'a>],
                body: Vec::<&'a Vec::<Token<'a>>>)
         -> Self
@@ -112,7 +112,7 @@ impl<'a> Job<'a> {
 
 impl fmt::Display for Job<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{t}: ", t = self.target.str)?;
+        write!(f, "{:?}: ", self.target)?;
         for t in self.dependencies {
             write!(f, "{s} ", s = t.str)?;
         }
@@ -308,9 +308,9 @@ impl<'a> Ast<'a> {
     ];
 
     #[track_caller]
-    fn report_err(&self, err: Error, token: Option::<&'a Token<'a>>) -> ! {
-        if let Some(errt) = token {
-            panic!("{errt}: [ERROR] {err}")
+    fn report_err(&self, err: Error, loc: Option::<&Loc>) -> ! {
+        if let Some(loc) = loc {
+            panic!("{loc}: [ERROR] {err}")
         } else {
             panic!("[ERROR] {err}")
         }
@@ -361,8 +361,8 @@ impl<'a> Ast<'a> {
             (Some(v), false) => (v, false),
             (Some(v), true)  => (v, true),
 
-            (None,    false) => self.report_err(Error::new(UndefinedVariable, None), Some(token)),
-            (None,    true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token)),
+            (None,    false) => self.report_err(Error::new(UndefinedVariable, None), Some(&token.loc)),
+            (None,    true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token.loc)),
         }
     }
 
@@ -379,7 +379,7 @@ impl<'a> Ast<'a> {
             (Some(self.get_value__(name, &token.loc)), false)
         } else if token.str.starts_with("$") {
             if name[1..].is_empty() {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token.loc));
             }
 
             if let Ok(value) = env::var(&name[1..]) {
@@ -399,31 +399,70 @@ impl<'a> Ast<'a> {
             .collect::<String>()
     }
 
-    fn eval_decl(&mut self, decl: Decl<'a>) {
-        use ErrorType::*;
+    fn parse_decl(&mut self, decl: Decl<'a>) {
+        use TokenType::{Plus, Minus};
 
         if self.vars.contains_key(&decl.left_side.str) {
             println!("{l} got redeclared", l = decl.left_side);
         }
 
-        let mut value = Vec::<String>::new();
-        for token in decl.right_side {
-            if !token.str.starts_with("#") {
-                value.push(token.str.to_owned());
-                continue
+        let value = if decl.right_side.iter()
+            .enumerate()
+            .any(|(i, t)| {
+                 matches!(t.typ, Plus | Minus)
+              && matches!(decl.right_side.get(i + 1), Some(t) if t.str.starts_with("#"))
+            })
+        {
+            let mut i = 0;
+            let mut tokens = Vec::new();
+            while i < decl.right_side.len() {
+                let token = decl.right_side[i];
+                let mut s = token.str.to_owned();
+                if !token.str.starts_with("#") {
+                    i += 1;
+                    tokens.push((s, &token.loc));
+                    continue
+                }
+
+                if let Some(sign) = decl.right_side.get(i + 1) {
+                    match sign.typ {
+                        Plus | Minus => if let Some(right_side) = decl.right_side.get(i + 2) {
+                            s.push(if matches!(sign.typ, Plus) { '+' } else { '-' });
+                            s.push_str(right_side.str);
+                            i += 2;
+                        } else {
+                            panic!("No right side")
+                        }
+                        _ => {}
+                    }
+                }
+
+                i += 1;
+                tokens.push((s, &token.loc));
             }
 
-            let name = Self::get_name(&token.str[1..]);
-            if name.is_empty() {
-                self.report_err(Error::new(UndefinedVariable, None), Some(token));
-            }
+            let len = tokens.len();
+            tokens.into_iter().fold(Vec::with_capacity(len), |mut value, (str, loc)| {
+                if !str.starts_with("#") {
+                    value.push(str.to_owned());
+                    return value
+                }
 
-            if let Some(t) = self.vars.get(name.as_str()) {
-                let mut tokens = t.into_iter().map(ToString::to_string).collect::<Vec::<_>>();
-                Self::concat_tokens(&name, token, &mut tokens);
-                value.extend(tokens);
-            }
-        }
+                value.extend(self.get_value__(&str, &loc));
+                value
+            })
+        } else {
+            let len = decl.right_side.len();
+            decl.right_side.into_iter().fold(Vec::with_capacity(len), |mut value, token| {
+                if !token.str.starts_with("#") {
+                    value.push(token.str.to_owned());
+                    return value
+                }
+
+                value.extend(self.get_value__(token.str, &token.loc));
+                value
+            })
+        };
 
         self.vars.insert(decl.left_side.str, value);
     }
@@ -443,7 +482,7 @@ impl<'a> Ast<'a> {
                 if let Some(v) = self.vars.get(&token.str[1..]) {
                     value.extend(v.to_owned());
                 } else {
-                    self.report_err(Error::new(UndefinedVariable, None), Some(&token))
+                    self.report_err(Error::new(UndefinedVariable, None), Some(&token.loc))
                 }
             } else {
                 value.push(token.str.to_owned());
@@ -451,7 +490,7 @@ impl<'a> Ast<'a> {
         }
 
         let Some(decl) = self.vars.get_mut(&key) else {
-            self.report_err(Error::new(UndefinedVariable, None), Some(&expr.left_side))
+            self.report_err(Error::new(UndefinedVariable, None), Some(&expr.left_side.loc))
         };
 
         match expr.operation {
@@ -472,7 +511,7 @@ impl<'a> Ast<'a> {
                     env::set_var(export.str, v.join(" "));
                 }
             } else {
-                self.report_err(Error::new(UndefinedVariable, None), Some(export));
+                self.report_err(Error::new(UndefinedVariable, None), Some(&export.loc));
             }
         }
     }
@@ -480,7 +519,7 @@ impl<'a> Ast<'a> {
     fn process_item(&mut self, item: Item<'a>) {
         match item {
             Item::If(r#if)            => self.process_if_tokens(r#if),
-            Item::Decl(decl)          => self.eval_decl(decl),
+            Item::Decl(decl)          => self.parse_decl(decl),
             Item::Job(job)            => self.parse_job(job),
             Item::Export(exports)     => self.export_unexport(exports, false),
             Item::Unexport(unexports) => self.export_unexport(unexports, true),
@@ -500,9 +539,9 @@ impl<'a> Ast<'a> {
 
     #[inline]
     #[track_caller]
-    fn unwrap_value<T>(&self, v: Option::<T>, errt: Option::<&Token>) -> T {
+    fn unwrap_value<T>(&self, v: Option::<T>, loc: &Loc) -> T {
         v.unwrap_or_else(|| {
-            self.report_err(Error::new(ErrorType::UndefinedVariable, None), errt)
+            self.report_err(Error::new(ErrorType::UndefinedVariable, None), Some(loc))
         })
     }
 
@@ -510,7 +549,7 @@ impl<'a> Ast<'a> {
         let (lv, is_env) = self.get_value_(r#if.left_side);
         let bool = match r#if.kind {
             IfKind::Eq | IfKind::Neq => {
-                let lv = self.unwrap_value(lv, Some(r#if.left_side));
+                let lv = self.unwrap_value(lv, &r#if.left_side.loc);
                 let rv = self.get_value_panic(unsafe { r#if.right_side.unwrap_unchecked() }).0;
                 lv.eq(&rv)
             }
@@ -518,7 +557,7 @@ impl<'a> Ast<'a> {
                 if lv.is_none() {
                     false
                 } else if r#if.left_side.str.starts_with(Self::VARIABLE_SYMBOL) {
-                    let lv = self.unwrap_value(lv, Some(r#if.left_side));
+                    let lv = self.unwrap_value(lv, &r#if.left_side.loc);
                     !lv.into_iter().any(|x| !self.vars.contains_key(x.as_str()))
                 } else {
                     is_env
@@ -534,48 +573,66 @@ impl<'a> Ast<'a> {
         }
     }
 
-    fn concat_tokens(name: &str, token: &'a Token, tokens: &mut Vec::<String>) {
-        let idx_ = name.len() + 1;
-        let idx = if matches!(token.str.chars().nth(idx_), Some(c) if c.eq(&'#')) {
-            idx_ + 1
-        } else { idx_ };
-        let s = &token.str[idx..];
-        if let Some(last) = tokens.last_mut() {
-            last.push_str(s);
-        } else {
-            tokens.push(s.to_owned());
-        }
-    }
-
     fn get_value__(&self, str: &'a str, loc: &Loc) -> Vec::<String> {
         let mut last_pos = 0;
         let mut ret = str.split('#')
             .into_iter()
-            .fold((Vec::<String>::new(), 0), |(mut ret, count), name|
+            .fold((
+                Vec::<String>::new(),
+                0,
+                None::<Vec::<String>>,
+                None::<Vec::<String>>,
+            ), |(mut ret, count, add, sub), name_|
         // I have this count here to keep track of whether I am processing a variable or concatenating tokens.
         // In cases like: `echo #SRC_DIR##BIN_FILE#concat`, this function will output you the values of the two variables, which are `SRC_DIR` and `BIN_FILE`, the first `#` indicates the end of the first variable's name, and the second one indicates the start of another variable. If you didn't have the second `#`, the tokens following it would be treated as regular tokens, rather than a name of the variable.
         // The counter works the following way: If the current string is empty or it is a variable, you increment the counter, this lets you know whether to treat the tokens as tokens or as variable name.
         {
-            if name.is_empty() {
+            if name_.is_empty() {
                 last_pos += 1;
-                return (ret, count + 1)
+                return (ret, count + 1, None, None)
             }
 
-            let name = Self::get_name(name);
+            let name = Self::get_name(name_);
             last_pos += name.len() + 1;
             if count & 1 == 0 {
                 unsafe { ret.last_mut().unwrap_unchecked() }.push_str(&name);
-                return (ret, count)
+                return (ret, count, None, None)
+            }
+
+            fn op_check(s: &str) -> Option::<Operation> {
+                if s.ends_with('+') {
+                    Some(Operation::Plus)
+                } else if s.ends_with('-') {
+                    Some(Operation::Minus)
+                } else { None }
             }
 
             if let Some(value) = self.vars.get(name.as_str()) {
                 let tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
+
+                if let Some(mut add_ts) = add {
+                    add_ts.last_mut().unwrap().extend(tokens);
+                    ret.extend(add_ts);
+                    return (ret, count, None, None)
+                } else if let Some(mut sub_ts) = sub {
+                    sub_ts.retain(|s| !tokens.contains(s));
+                    ret.extend(sub_ts);
+                    return (ret, count, None, None)
+                }
+
+                match op_check(name_) {
+                    Some(Operation::Plus)  => return (ret, count, Some(tokens), None),
+                    Some(Operation::Minus) => return (ret, count, None, Some(tokens)),
+                    _ => {}
+                };
+
                 if let Some(last) = ret.last_mut() {
                     last.push_str(&tokens.join(" "));
                 } else {
                     ret.extend(tokens);
                 }
-                (ret, count + 1)
+
+                (ret, count + 1, None, None)
             } else {
                 panic!("{loc}: [ERROR] Undefined variable")
             }
@@ -593,47 +650,47 @@ impl<'a> Ast<'a> {
         ret
     }
 
-    fn get_value_for_job(&self, token: &'a Token<'a>, section: ParsingSection, curr_job: &CurrJob) -> Vec::<String> {
+    fn get_value_for_job(&self, token_str: &str, token_loc: &Loc, section: ParsingSection, curr_job: &CurrJob) -> Vec::<String> {
         use {
             ErrorType::*,
             ParsingSection::*,
         };
 
-        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            self.get_value__(token.str, &token.loc)
-        } else if token.str.starts_with('$') {
-            let name = Self::get_name(&token.str[1..]);
+        if token_str.starts_with(Self::VARIABLE_SYMBOL) {
+            self.get_value__(token_str, &token_loc)
+        } else if token_str.starts_with('$') {
+            let name = Self::get_name(&token_str[1..]);
             if name.is_empty() {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token));
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token_loc));
             }
 
             if Self::PATTERNS.contains(&name.as_str()) {
                 match name.as_str() {
                     "d" | "<" => if matches!(section, Dependencies | Target) {
                         let msg = "You can use \"$d\" and \"$<\" ONLY in body of job";
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(token));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(&token_loc));
                     } else if let Some(dep) = unsafe { curr_job.dependencies.unwrap_unchecked() }.first() {
                         vec![dep.to_string()]
                     } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&token_loc));
                     },
 
                     "ds" | "^" => if matches!(section, Dependencies | Target) {
                         let msg = "You can use \"$d\" and \"$<\" ONLY in body of job";
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(token));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(&token_loc));
                     } else if !unsafe { curr_job.dependencies.unwrap_unchecked() }.is_empty() {
                         curr_job.dependencies.unwrap().iter().map(ToString::to_string).collect()
                     } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&token_loc));
                     },
 
                     "t" | "@" => if matches!(section, Target) {
                         let msg = "You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies";
-                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection, Some(msg)), Some(token));
+                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection, Some(msg)), Some(&token_loc));
                     } else if let Some(target) = curr_job.target {
                         vec![target.to_owned()]
                     } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(token));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&token_loc));
                     },
 
                     _ => unreachable!()
@@ -641,10 +698,10 @@ impl<'a> Ast<'a> {
             } else if let Ok(value) = env::var(name) {
                 vec![value]
             } else {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token))
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token_loc))
             }
         } else {
-            vec![token.str.to_owned()]
+            vec![token_str.to_owned()]
         }
     }
 
@@ -655,17 +712,19 @@ impl<'a> Ast<'a> {
         };
 
         let mut curr_job = CurrJob::default();
-        let target = self.get_value_for_job(job.target, Target, &curr_job).join(" ");
+
+        let str = job.target.iter().map(|t| t.str).collect::<Vec::<_>>().join(" ");
+        let target = self.get_value_for_job(&str, &job.target[0].loc, Target, &curr_job).join(" ");
         curr_job.target = Some(&target);
 
         let deps = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
             |mut deps, t|
         {
-            let value = self.get_value_for_job(t, Dependencies, &curr_job);
+            let value = self.get_value_for_job(t.str, &t.loc, Dependencies, &curr_job);
             if value.iter().any(|s| target.eq(s)) {
                 let msg = format!("Job \"{target}\" depends on itself, so, infinite recursion detected");
                 let err = Error::new(JobDependsOnItself, Some(&msg));
-                self.report_err(err, Some(t));
+                self.report_err(err, Some(&t.loc));
             }
             deps.extend(value);
             deps
@@ -677,7 +736,7 @@ impl<'a> Ast<'a> {
 
         curr_job.dependencies = Some(&deps);
         let body = job.body.into_iter().fold(Vec::new(), |mut body, line| {
-            let mut line = line.iter().map(|t| self.get_value_for_job(t, Body, &curr_job).join(" ")).collect();
+            let mut line = line.iter().map(|t| self.get_value_for_job(t.str, &t.loc, Body, &curr_job).join(" ")).collect();
             let silent = is_line_silent(&line);
             if silent {
                 line[0] = line[0][1..].to_owned();

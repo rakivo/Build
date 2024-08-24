@@ -44,7 +44,6 @@ pub enum ErrorType {
     JobWithoutTarget,
     ExportWithNoArgs,
     UnexportWithNoArgs,
-    ExpectedOnlyOneTokenOnTheLeftSide,
 }
 
 impl fmt::Display for ErrorType {
@@ -58,7 +57,6 @@ impl fmt::Display for ErrorType {
             ExportWithNoArgs => write!(f, "Export with no args"),
             JobWithoutTarget => write!(f, "Job without a target"),
             UnexportWithNoArgs => write!(f, "Unexport with no args"),
-            ExpectedOnlyOneTokenOnTheLeftSide => write!(f, "Expected only one token on the left side")
         }
     }
 }
@@ -132,22 +130,6 @@ impl<'a> Parser<'a> {
         Self::report_err(Error::new(ErrorType::UnexpectedToken, None), line.get(0))
     }
 
-    // To check token that we have only one token on the left side in these kinda situations:
-    // ```
-    // FLAGS=-f 69
-    // ```
-    // or here:
-    // ```
-    // $OUT: main.c
-    //     $CC -o $t $FLAGS
-    // ```
-    #[inline]
-    fn check_token_pos(pos: usize, token: Option::<&'a Token<'a>>) {
-        if pos > 1 {
-            Self::report_err(Error::new(ErrorType::ExpectedOnlyOneTokenOnTheLeftSide, None), token)
-        }
-    }
-
     //                                          is token joint or not
     //                                                    ^^
     #[inline]
@@ -186,8 +168,6 @@ impl<'a> Parser<'a> {
                 return Item::Expr(expr)
             }
         }
-
-        Self::check_token_pos(eq_idx, Some(first));
 
         let left_side = first;
         let right_side = line[eq_idx + 1..].into_iter().collect::<Vec::<_>>();
@@ -233,7 +213,7 @@ impl<'a> Parser<'a> {
                 } else if EXPORTS.contains(&first.str) {
                     Self::parse_export_unexport(first, line)
                 } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
-                    Self::parse_job(first, line, iter2, colon_idx)
+                    Self::parse_job(line, iter2, colon_idx)
                 } else {
                     todo!()
                 };
@@ -269,10 +249,8 @@ impl<'a> Parser<'a> {
         Item::If(r#if)
     }
 
-    fn parse_job(first: &'a Token, line: &'a Tokens, iter: &mut LinizedTokensIterator<'a>, colon_idx: usize) -> Item<'a> {
-        Self::check_token_pos(colon_idx, Some(first));
-
-        let target = first;
+    fn parse_job(line: &'a Tokens, iter: &mut LinizedTokensIterator<'a>, colon_idx: usize) -> Item<'a> {
+        let target = &line[..colon_idx];
         let dependencies = &line[colon_idx + 1..];
         let mut body = Vec::with_capacity(line.len());
         while let Some((wc, line)) = iter.peek() {
@@ -308,7 +286,7 @@ impl<'a> Parser<'a> {
                 let item = Self::parse_eq(first, line, eq_idx);
                 self.items.push(item);
             } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
-                let item = Self::parse_job(first, line, &mut self.iter, colon_idx);
+                let item = Self::parse_job(line, &mut self.iter, colon_idx);
                 self.items.push(item);
             } else {
                 Self::uft_err(line);

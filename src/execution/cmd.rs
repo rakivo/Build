@@ -143,11 +143,7 @@ impl Execute {
 
     #[inline]
     fn render_cmd(cmds: &[String]) -> String {
-        cmds.iter().fold(String::new(), |mut ret, cmd| {
-            ret.push_str(&cmd.replace(" = ", "="));
-            ret.push(' ');
-            ret
-        })
+        cmds.join(" ").replace(" = ", "=")
     }
 
     pub const CMD_ARG:  &'static str = if cfg!(windows) {"cmd"} else {"sh"};

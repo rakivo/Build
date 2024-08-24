@@ -42,6 +42,12 @@ impl fmt::Display for Loc<'_> {
     }
 }
 
+impl fmt::Debug for Loc<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 #[derive(Clone)]
 pub struct Token<'a> {
     pub wc:  usize,
