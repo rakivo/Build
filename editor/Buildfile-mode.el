@@ -39,10 +39,11 @@
 
 (eval-and-compile
   (defconst Buildfile-instructions
-     '("ifdef" "ifndef" "ifeq" "ifneq" "endif")))
+     '("ifdef" "ifndef" "ifeq" "ifneq" "endif" "shell")))
 
 (defconst Buildfile-highlights
   `((,(regexp-opt Buildfile-instructions 'symbols) . font-lock-keyword-face)
+    ("\\<shell\\>" . font-lock-keyword-face)
     ("#[[:word:]_]+" . font-lock-preprocessor-face)
     ("@[[:word:]_]+" . font-lock-builtin-face)
     ("[[:word:]_]+:" . font-lock-constant-face)
