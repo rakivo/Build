@@ -24,8 +24,8 @@ pub enum TokenType {
     Minus,
     MinusEqual,
 
-    LCurly,
-    RCurly,
+    LParen,
+    RParen,
 
     Colon,
 }
@@ -113,8 +113,8 @@ impl<'a> Lexer<'a> {
             let tt = match first {
                 b'\'' => Char,
                 b'"'  => String,
-                b'{'  => LCurly,
-                b'}'  => RCurly,
+                b'('  => LParen,
+                b')'  => RParen,
                 b':'  => Colon,
                 b'='  => Equal,
                 b'-'  => if second.eq(&Some(b'=')) {
@@ -147,7 +147,7 @@ impl<'a> Lexer<'a> {
         Ok(ts)
     }
 
-    const SPLIT_CHARS: &'static [char] = &['=', ':'];
+    const SPLIT_CHARS: &'static [char] = &['(', ')', '=', ':'];
 
     fn split_whitespace_preserve_indices(input: &str) -> (usize, IntoIter::<ColStr>) {
         let (s, e, mut ret) = input.char_indices().fold((0, 0, Vec::with_capacity(input.len())),

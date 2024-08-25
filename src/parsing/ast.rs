@@ -1,5 +1,5 @@
 use crate::{
-    execution::cmd::{Jobs, Job as CmdJob},
+    execution::cmd::{Jobs, Job as CmdJob, Execute},
     parsing::{
         parser::{IFEQ,  IFNEQ, IFDEF, IFNDEF},
         lexer::{Loc, Token, Tokens, TokenType},
@@ -398,6 +398,37 @@ impl<'a> Ast<'a> {
             println!("{l} got redeclared", l = decl.left_side);
         }
 
+        if matches!(decl.right_side.first(), Some(token) if token.str.starts_with("shell")) {
+            let shell_token = decl.right_side[0];
+
+            let Some(lparen_idx) = decl.right_side.iter().position(|token| matches!(token.typ, TokenType::LParen)) else {
+                panic!("{loc} Expected lparen after `shell` keyword", loc = shell_token.loc);
+            };
+
+            let Some(rparen_idx) = decl.right_side.iter().position(|token| matches!(token.typ, TokenType::RParen)) else {
+                panic!("{loc} Expected closing rparen after the lparen", loc = decl.right_side[lparen_idx].loc);
+            };
+
+            if lparen_idx + 1 == rparen_idx {
+                panic!("{loc} `shell` keyword with no commands inside", loc = shell_token.loc);
+            }
+
+            let cmd = decl.right_side[lparen_idx + 1..rparen_idx].into_iter().map(|t| {
+                if t.str.starts_with(Self::VARIABLE_SYMBOL) {
+                    self.get_value__(t.str, &t.loc).join(" ")
+                } else {
+                    t.str.to_owned()
+                }
+            }).collect::<Vec::<_>>().join(" ");
+
+            let value = Execute::execute_cmd(&cmd, true, false).unwrap_or_else(|_| {
+                panic!("{loc} Process exited with non-zero code", loc = shell_token.loc)
+            }).lines().map(ToOwned::to_owned).collect();
+
+            self.vars.insert(decl.left_side.str, value);
+            return
+        }
+
         let value = if decl.right_side.iter()
             .enumerate()
             .any(|(i, t)| {
@@ -599,37 +630,36 @@ impl<'a> Ast<'a> {
                 } else { None }
             }
 
-            if let Some(value) = self.vars.get(name.as_str()) {
-                let tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
-
-                if let Some(mut add_ts) = add {
-                    let last = add_ts.last_mut().unwrap();
-                    last.push(' ');
-                    last.extend(tokens);
-                    ret.extend(add_ts);
-                    return (ret, count, None, None)
-                } else if let Some(mut sub_ts) = sub {
-                    sub_ts.retain(|s| !tokens.contains(s));
-                    ret.extend(sub_ts);
-                    return (ret, count, None, None)
-                }
-
-                match op_check(name_) {
-                    Some(Operation::Plus)  => return (ret, count, Some(tokens), None),
-                    Some(Operation::Minus) => return (ret, count, None, Some(tokens)),
-                    _ => {}
-                };
-
-                if let Some(last) = ret.last_mut() {
-                    last.push_str(&tokens.join(" "));
-                } else {
-                    ret.extend(tokens);
-                }
-
-                (ret, count + 1, None, None)
-            } else {
+            let value = self.vars.get(name.as_str()).unwrap_or_else(|| {
                 panic!("{loc}: [ERROR] Undefined variable")
+            });
+
+            let tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
+            if let Some(mut add_ts) = add {
+                let last = add_ts.last_mut().unwrap();
+                last.push(' ');
+                last.extend(tokens);
+                ret.extend(add_ts);
+                return (ret, count, None, None)
+            } else if let Some(mut sub_ts) = sub {
+                sub_ts.retain(|s| !tokens.contains(s));
+                ret.extend(sub_ts);
+                return (ret, count, None, None)
             }
+
+            match op_check(name_) {
+                Some(Operation::Plus)  => return (ret, count, Some(tokens), None),
+                Some(Operation::Minus) => return (ret, count, None, Some(tokens)),
+                _ => {}
+            };
+
+            if let Some(last) = ret.last_mut() {
+                last.push_str(&tokens.join(" "));
+            } else {
+                ret.extend(tokens);
+            }
+
+            (ret, count + 1, None, None)
         }).0;
 
         if last_pos + 1 < str.len() {

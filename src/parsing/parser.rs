@@ -15,7 +15,7 @@ use crate::{
 use std::{
     fmt,
     slice::Iter,
-    iter::Peekable
+    iter::Peekable,
 };
 
 pub type LinizedTokensIterator<'a> = Peekable::<Iter::<'a, (usize, Tokens<'a>)>>;
@@ -93,7 +93,7 @@ macro_rules! collect_exports {
         if item.is_empty() {
             Self::report_err(Error::new($errty, None), Some($first));
         }
-        $self.items.push(Item::$vty(item));
+        Item::$vty(item)
     }};
 }
 
@@ -146,6 +146,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_eq(first: &'a Token, line: &'a Tokens, eq_idx: usize) -> Item<'a> {
+        // Check for expr
         if let Some(token) = line.get(eq_idx - 1) {
             if eq_idx + 1 >= line.len() {
                 panic!("Expected right side after expression")
@@ -274,20 +275,17 @@ impl<'a> Parser<'a> {
         let mut iter = line.into_iter().peekable();
         let Some(first) = iter.peek() else { return };
         if first.str.eq("endif") { return };
-        match first.typ {
+        let item = match first.typ {
             Literal => if IFS.contains(&first.str) {
-                let item = Self::parse_if(&first, &mut iter, &mut self.iter);
-                self.items.push(item);
+                Self::parse_if(&first, &mut iter, &mut self.iter)
             } else if first.str.eq(EXPORT) {
-                collect_exports!(self, first, line, Export, ExportWithNoArgs);
+                collect_exports!(self, first, line, Export, ExportWithNoArgs)
             } else if first.str.eq(UNEXPORT) {
-                collect_exports!(self, first, line, Unexport, UnexportWithNoArgs);
+                collect_exports!(self, first, line, Unexport, UnexportWithNoArgs)
             } else if let Some(eq_idx) = line.iter().position(|x| matches!(x.typ, Equal)) {
-                let item = Self::parse_eq(first, line, eq_idx);
-                self.items.push(item);
+                Self::parse_eq(first, line, eq_idx)
             } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
-                let item = Self::parse_job(line, &mut self.iter, colon_idx);
-                self.items.push(item);
+                Self::parse_job(line, &mut self.iter, colon_idx)
             } else {
                 Self::uft_err(line);
             },
@@ -298,6 +296,8 @@ impl<'a> Parser<'a> {
             }
             _ => Self::uft_err(line)
         };
+
+        self.items.push(item);
     }
 
     pub fn parse(&mut self) {

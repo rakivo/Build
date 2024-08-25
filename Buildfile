@@ -1,7 +1,7 @@
 SRC_DIR=src
 BIN_FILE=buildfile
-PARSING_FILES=#SRC_DIR/parsing/ast.rs #SRC_DIR/parsing/lexer.rs #SRC_DIR/parsing/parser.rs
-EXECUTING_FILES=#SRC_DIR/execution/cmd.rs #SRC_DIR/execution/flag.rs #SRC_DIR/execution/flags.rs
+PARSING_FILES=shell(ls #SRC_DIR/parsing/*.rs)
+EXECUTION_FILES=shell(ls #SRC_DIR/execution/*.rs)
 
 RUST_FLAGS=--edition 2021 -C opt-level=3
 
@@ -10,7 +10,7 @@ ifdef $DEBUG
     #RUST_FLAGS+=--cfg='feature="dbg"'
 endif
 
-#BIN_FILE: #SRC_DIR/main.rs #PARSING_FILES #EXECUTING_FILES
+#BIN_FILE: #SRC_DIR/main.rs #PARSING_FILES #EXECUTION_FILES
     rustc -o $t $d #RUST_FLAGS -g
 
 clean:

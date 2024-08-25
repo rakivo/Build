@@ -142,12 +142,42 @@ impl Execute {
     }
 
     #[inline]
-    fn render_cmd(cmds: &[String]) -> String {
+    pub fn render_cmd(cmds: &[String]) -> String {
         cmds.join(" ").replace(" = ", "=")
     }
 
     pub const CMD_ARG:  &'static str = if cfg!(windows) {"cmd"} else {"sh"};
     pub const CMD_ARG2: &'static str = if cfg!(windows) {"/C"} else {"-c"};
+
+    pub fn execute_cmd(cmd: &str, keepgoing: bool, echo: bool) -> Result::<String, String> {
+        let out = Command::new(Self::CMD_ARG).arg(Self::CMD_ARG2)
+            .arg(cmd)
+            .output()
+            .expect("Failed to execute process");
+
+        if let Some(code) = out.status.code() {
+            if code != 0 {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if !stderr.is_empty() {
+                    eprint!("{stderr}");
+                }
+
+                if echo {
+                    eprintln!("Process exited abnormally with code {code}");
+                }
+
+                if !keepgoing { exit(1) }
+                return Err(stderr.to_string())
+            }
+        }
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if !stdout.is_empty() && echo {
+            eprint!("{stdout}" );
+        }
+
+        Ok(stdout.to_string())
+    }
 
     fn execute_job_if_needed(&self, job: &Job) {
         if !self.needs_rebuild(&job) {
@@ -155,30 +185,12 @@ impl Execute {
         }
 
         for (silent, line) in job.body.iter() {
-            let rendered = Self::render_cmd(&line);
+            let cmd = Self::render_cmd(&line);
             if !self.flags.silent && !silent {
-                println!("{rendered}");
+                println!("{cmd}");
             }
 
-            let out = Command::new(Self::CMD_ARG).arg(Self::CMD_ARG2)
-                .arg(rendered)
-                .output()
-                .expect("Failed to execute process");
-
-            if let Some(code) = out.status.code() {
-                if code != 0 {
-                    if !out.stderr.is_empty() {
-                        eprint!("{stderr}", stderr = String::from_utf8_lossy(&out.stderr));
-                    }
-
-                    eprintln!("Process exited abnormally with code {code}");
-                    if !self.flags.keepgoing { exit(1) }
-                }
-            }
-
-            if !out.stdout.is_empty() {
-                eprint!("{stdout}", stdout = String::from_utf8_lossy(&out.stdout));
-            }
+            _ = Self::execute_cmd(&cmd, self.flags.keepgoing, true);
         }
     }
 
