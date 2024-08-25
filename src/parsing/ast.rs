@@ -1,15 +1,9 @@
 use crate::{
+    execution::cmd::{Jobs, Job as CmdJob},
     parsing::{
-        lexer::{Loc, Token,
-                Tokens, TokenType},
-
-        parser::{IFEQ, IFNEQ,
-                 IFDEF, IFNDEF},
+        parser::{IFEQ,  IFNEQ, IFDEF, IFNDEF},
+        lexer::{Loc, Token, Tokens, TokenType},
     },
-    execution::cmd::{
-        Jobs,
-        Job as CmdJob,
-    }
 };
 
 use std::{
@@ -52,11 +46,9 @@ impl fmt::Display for Decl<'_> {
 
 #[derive(Debug)]
 pub enum Operation {
-    #[allow(unused)]
     Plus,
     PlusEqual,
 
-    #[allow(unused)]
     Minus,
     MinusEqual,
 }
@@ -581,7 +573,7 @@ impl<'a> Ast<'a> {
                 Vec::<String>::new(),
                 0,
                 None::<Vec::<String>>,
-                None::<Vec::<String>>,
+               None::<Vec::<String>>,
             ), |(mut ret, count, add, sub), name_|
         // I have this count here to keep track of whether I am processing a variable or concatenating tokens.
         // In cases like: `echo #SRC_DIR##BIN_FILE#concat`, this function will output you the values of the two variables, which are `SRC_DIR` and `BIN_FILE`, the first `#` indicates the end of the first variable's name, and the second one indicates the start of another variable. If you didn't have the second `#`, the tokens following it would be treated as regular tokens, rather than a name of the variable.
@@ -611,7 +603,9 @@ impl<'a> Ast<'a> {
                 let tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
 
                 if let Some(mut add_ts) = add {
-                    add_ts.last_mut().unwrap().extend(tokens);
+                    let last = add_ts.last_mut().unwrap();
+                    last.push(' ');
+                    last.extend(tokens);
                     ret.extend(add_ts);
                     return (ret, count, None, None)
                 } else if let Some(mut sub_ts) = sub {

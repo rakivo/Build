@@ -3,10 +3,7 @@ use std::{
     str,
     path::PathBuf,
     vec::IntoIter,
-    iter::{
-        Peekable,
-        Enumerate
-    },
+    iter::{Peekable, Enumerate},
 };
 
 pub type ColStr<'a> = (usize, &'a str);
