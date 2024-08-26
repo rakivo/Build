@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use crate::execution::flags::Flags;
+use crate::{panic, parsing::flags::Flags};
 
 const BUILD_FILE_NAME: &'static str = "Buildfile";
 
@@ -99,9 +99,9 @@ impl Execute {
     }
 
     #[inline]
-    fn get_last_modification_time(s: &str) -> std::io::Result::<SystemTime> {
+    fn get_last_modification_time(s: &str, j: &str) -> std::io::Result::<SystemTime> {
         metadata::<PathBuf>(s.into()).map_err(|err| {
-            eprintln!("[ERROR] Failed to get last modification time of \"{s}\", apparently it does not exist");
+            eprintln!("[ERROR] Failed to get last modification time of \"{s}\" needed by \"{j}\", apparently it does not exist");
             err
         })?.modified()
     }
@@ -130,14 +130,14 @@ impl Execute {
             if let Some(job) = self.jobs.iter().find(|j| j.target.eq(dep)) {
                 self.execute_job_if_needed(job);
             } else {
-                let time = Self::get_last_modification_time(dep).unwrap();
+                let time = Self::get_last_modification_time(dep, &job.target).unwrap_or_else(|_| panic!(""));
                 times.push(time);
             } times
         });
 
         if !Self::path_exists(&job.target) { return true }
 
-        let target_mod_time = unsafe { Self::get_last_modification_time(&job.target).unwrap_unchecked() };
+        let target_mod_time = unsafe { Self::get_last_modification_time(&job.target, &job.target).unwrap_unchecked() };
         times.into_iter().any(|dep_mod_time| dep_mod_time > target_mod_time)
     }
 
@@ -180,7 +180,7 @@ impl Execute {
     }
 
     fn execute_job_if_needed(&self, job: &Job) {
-        if !self.needs_rebuild(&job) {
+        if !self.needs_rebuild(&job) && !job.body.is_empty() {
             return Self::nothing_to_do_for(&job.target)
         }
 
@@ -189,8 +189,7 @@ impl Execute {
             if !self.flags.silent && !silent {
                 println!("{cmd}");
             }
-
-            _ = Self::execute_cmd(&cmd, self.flags.keepgoing, true);
+            drop(Self::execute_cmd(&cmd, self.flags.keepgoing, true));
         }
     }
 

@@ -322,9 +322,9 @@ impl<'a> Eval<'a> {
     #[track_caller]
     fn report_err(&self, err: Error, loc: Option::<&Loc>) -> ! {
         if let Some(loc) = loc {
-            panic!("{loc}: [ERROR] {err}")
+            panic!("{loc}: [ERROR] {err}\n")
         } else {
-            panic!("[ERROR] {err}")
+            panic!("[ERROR] {err}\n")
         }
     }
 
@@ -336,7 +336,7 @@ impl<'a> Eval<'a> {
     #[inline]
     #[track_caller]
     const fn handle_keyword_here() -> ! {
-        panic!("HANDLE KEYWORD HERE")
+        panic!("HANDLE KEYWORD HERE\n")
     }
 
     fn detect_cycle(&self) -> bool {
@@ -378,44 +378,6 @@ impl<'a> Eval<'a> {
     }
 
     #[inline]
-    fn get_value_panic(&self, token: &'a Token) -> (Vec::<String>, bool) {
-        use ErrorType::*;
-        match self.get_value_(token) {
-            (Some(v), false) => (v, false),
-            (Some(v), true)  => (v, true),
-
-            (None,    false) => self.report_err(Error::new(UndefinedVariable, None), Some(&token.loc)),
-            (None,    true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token.loc)),
-        }
-    }
-
-    fn get_value_(&self, token: &'a Token) -> (Option::<Vec::<String>>, bool) {
-        use ErrorType::*;
-
-        let name = if token.str.ends_with(",") {
-            &token.str[..token.str.len() - 1]
-        } else {
-            &token.str
-        };
-
-        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
-            (Some(self.get_value__(name, &token.loc)), false)
-        } else if token.str.starts_with("$") {
-            if name[1..].is_empty() {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token.loc));
-            }
-
-            if let Ok(value) = env::var(&name[1..]) {
-                (Some(vec![value]), true)
-            } else {
-                (None, true)
-            }
-        } else {
-            (Some(vec![name.to_owned()]), false)
-        }
-    }
-
-    #[inline]
     fn get_name(token: &str) -> String {
         token.chars()
             .take_while(|c| c.is_alphabetic() || c.eq(&'_'))
@@ -424,24 +386,22 @@ impl<'a> Eval<'a> {
 
     fn get_parens_from_tokens(err_loc: &Loc, tokens: &[&Token]) -> (usize, usize) {
         let Some(lparen_idx) = tokens.iter().position(|token| matches!(token.typ, TokenType::LParen)) else {
-            panic!("{err_loc} Expected lparen after `shell` keyword");
+            panic!("{err_loc} Expected lparen after `shell` keyword\n");
         };
 
         let Some(rparen_idx) = tokens.iter().position(|token| matches!(token.typ, TokenType::RParen)) else {
-            panic!("{err_loc} Expected closing rparen after the lparen", err_loc = tokens[lparen_idx].loc);
+            panic!("{err_loc} Expected closing rparen after the lparen\n", err_loc = tokens[lparen_idx].loc);
         };
 
         if lparen_idx + 1 == rparen_idx {
-            panic!("{err_loc} `shell` keyword with no commands inside");
+            panic!("{err_loc} `shell` keyword with no commands inside\n");
         }
 
         (lparen_idx, rparen_idx)
     }
 
     fn eval_shell(&self, shell_loc: &Loc, tokens: &Vec::<&Token>, paren_idxs: Option::<(usize, usize)>) -> String {
-        let (lparen_idx, rparen_idx) = paren_idxs.unwrap_or({
-            Self::get_parens_from_tokens(shell_loc, tokens.as_slice())
-        });
+        let (lparen_idx, rparen_idx) = paren_idxs.unwrap_or(Self::get_parens_from_tokens(shell_loc, tokens.as_slice()));
         let cmd = tokens[lparen_idx + 1..rparen_idx].into_iter().map(|t| {
             if t.str.starts_with(Self::VARIABLE_SYMBOL) {
                 self.get_value__(t.str, &t.loc).join(" ")
@@ -451,16 +411,14 @@ impl<'a> Eval<'a> {
         }).collect::<Vec::<_>>().join(" ");
 
         Execute::execute_cmd(&cmd, true, false).unwrap_or_else(|_| {
-            panic!("{shell_loc} Process exited with non-zero code")
+            panic!("{shell_loc} Process exited with non-zero code\n")
         })
     }
 
     fn eval_addprefix(&self, addprefix_loc: &Loc, tokens: &Vec::<&Token>, paren_idxs: Option::<(usize, usize)>, vpref: bool) -> Vec::<String> {
-        let (lparen_idx, rparen_idx) = paren_idxs.unwrap_or({
-            Self::get_parens_from_tokens(addprefix_loc, tokens.as_slice())
-        });
+        let (lparen_idx, rparen_idx) = paren_idxs.unwrap_or(Self::get_parens_from_tokens(addprefix_loc, tokens.as_slice()));
         let Some(prefix) = tokens.get(lparen_idx + 1) else {
-            panic!("{addprefix_loc} `addprefix` without prefix")
+            panic!("{addprefix_loc} `addprefix` without prefix\n")
         };
 
         let prefix_str = &prefix.str;
@@ -534,7 +492,7 @@ impl<'a> Eval<'a> {
                             s.push_str(right_side.str);
                             i += 2;
                         } else {
-                            panic!("No right side")
+                            panic!("No right side\n")
                         }
                         _ => {}
                     }
@@ -592,7 +550,7 @@ impl<'a> Eval<'a> {
                 if un {
                     env::remove_var(export.str);
                 } else {
-                    env::set_var(export.str, v.join(" "));
+                    env::set_var(export.str, v.join(" ").replace(" = ", "="));
                 }
             } else {
                 self.report_err(Error::new(UndefinedVariable, None), Some(&export.loc));
@@ -610,7 +568,7 @@ impl<'a> Eval<'a> {
             Item::Expr(expr)          => if expr.left_side.str.starts_with("#") {
                 self.parse_expr(&expr);
             } else {
-                panic!("In-place math expressions are not supported yet BRUH, or probably you forgot to put a `#` thingy")
+                panic!("In-place math expressions are not supported yet BRUH, or probably you forgot to put a `#` thingy\n")
             }
         }
     }
@@ -629,12 +587,50 @@ impl<'a> Eval<'a> {
         })
     }
 
+    #[inline]
+    fn get_value_for_if_panic(&self, token: &'a Token) -> (Vec::<String>, bool) {
+        use ErrorType::*;
+        match self.get_value_for_if(token) {
+            (Some(v), false) => (v, false),
+            (Some(v), true)  => (v, true),
+
+            (None,    false) => self.report_err(Error::new(UndefinedVariable, None), Some(&token.loc)),
+            (None,    true)  => self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token.loc)),
+        }
+    }
+
+    fn get_value_for_if(&self, token: &'a Token) -> (Option::<Vec::<String>>, bool) {
+        use ErrorType::*;
+
+        let name = if token.str.ends_with(",") {
+            &token.str[..token.str.len() - 1]
+        } else {
+            &token.str
+        };
+
+        if token.str.starts_with(Self::VARIABLE_SYMBOL) {
+            (Some(self.get_value__(name, &token.loc)), false)
+        } else if token.str.starts_with("$") {
+            if name[1..].is_empty() {
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token.loc));
+            }
+
+            if let Ok(value) = env::var(&name[1..]) {
+                (Some(vec![value]), true)
+            } else {
+                (None, true)
+            }
+        } else {
+            (Some(vec![name.to_owned()]), false)
+        }
+    }
+
     fn parse_if(&self, r#if: If<'a>) -> Vec::<Item<'a>> {
-        let (lv, is_env) = self.get_value_(r#if.left_side);
+        let (lv, is_env) = self.get_value_for_if(r#if.left_side);
         let bool = match r#if.kind {
             IfKind::Eq | IfKind::Neq => {
                 let lv = self.unwrap_value(lv, &r#if.left_side.loc);
-                let rv = self.get_value_panic(unsafe { r#if.right_side.unwrap_unchecked() }).0;
+                let rv = self.get_value_for_if_panic(unsafe { r#if.right_side.unwrap_unchecked() }).0;
                 lv.eq(&rv)
             }
             IfKind::Def | IfKind::Ndef => {
@@ -692,7 +688,7 @@ impl<'a> Eval<'a> {
             }
 
             let value = self.vars.get(name.as_str()).unwrap_or_else(|| {
-                panic!("{loc}: [ERROR] Undefined variable")
+                panic!("{loc}: [ERROR] Undefined variable\n")
             });
 
             let tokens = value.iter().map(ToString::to_string).collect::<Vec::<_>>();
@@ -741,6 +737,9 @@ impl<'a> Eval<'a> {
             ParsingSection::*,
         };
 
+        const INVALID_DEP_PATTERN_NOTE: &'static str = "You can use \"$d\" and \"$<\" ONLY in body of job";
+        const INVALID_TARGET_PATTERN_NOTE: &'static str = "You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies";
+
         if token_str.starts_with(Self::VARIABLE_SYMBOL) {
             self.get_value__(token_str, &token_loc)
         } else if token_str.starts_with('$') {
@@ -752,8 +751,7 @@ impl<'a> Eval<'a> {
             if Self::PATTERNS.contains(&name.as_str()) {
                 match name.as_str() {
                     "d" | "<" => if matches!(section, Dependencies | Target) {
-                        let msg = "You can use \"$d\" and \"$<\" ONLY in body of job";
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(&token_loc));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc));
                     } else if let Some(dep) = unsafe { curr_job.dependencies.unwrap_unchecked() }.first() {
                         vec![dep.to_string()]
                     } else {
@@ -761,8 +759,7 @@ impl<'a> Eval<'a> {
                     },
 
                     "ds" | "^" => if matches!(section, Dependencies | Target) {
-                        let msg = "You can use \"$d\" and \"$<\" ONLY in body of job";
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(msg)), Some(&token_loc));
+                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc));
                     } else if !unsafe { curr_job.dependencies.unwrap_unchecked() }.is_empty() {
                         curr_job.dependencies.unwrap().iter().map(ToString::to_string).collect()
                     } else {
@@ -770,8 +767,7 @@ impl<'a> Eval<'a> {
                     },
 
                     "t" | "@" => if matches!(section, Target) {
-                        let msg = "You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies";
-                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection, Some(msg)), Some(&token_loc));
+                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection, Some(INVALID_TARGET_PATTERN_NOTE)), Some(&token_loc));
                     } else if let Some(target) = curr_job.target {
                         vec![target.to_owned()]
                     } else {
@@ -833,6 +829,7 @@ impl<'a> Eval<'a> {
             ParsingSection::*
         };
 
+        // Temp `Job` instance to keep track of target and dependencies to expand patterns like `$t`/`$@`, `$d`/`$<` etc...
         let mut curr_job = CurrJob::default();
 
         let target = if let Some(keyword_tokens) = self.target_check_for_keyword(job.target) {
@@ -862,17 +859,16 @@ impl<'a> Eval<'a> {
             deps.extend(value);
         }
 
+        curr_job.dependencies = Some(&deps);
+
         fn is_line_silent(line: &Vec::<String>) -> bool {
             matches!(line.first(), Some(t) if t.starts_with("@"))
         }
 
-        curr_job.dependencies = Some(&deps);
         let body = job.body.into_iter().fold(Vec::new(), |mut body, line| {
             let mut line = line.iter().map(|t| self.get_value_for_job(t.str, &t.loc, Body, &curr_job).join(" ")).collect();
             let silent = is_line_silent(&line);
-            if silent {
-                line[0] = line[0][1..].to_owned();
-            }
+            if silent { line[0].remove(0); }
             body.push((silent, line));
             body
         });

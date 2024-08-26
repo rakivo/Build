@@ -1,15 +1,26 @@
 mod parsing;
-use parsing::{lexer::Lexer, parser::Parser};
+use parsing::{flags::parse_flags, lexer::Lexer, parser::Parser};
 
 mod execution;
 use execution::{
-    flags::parse_flags,
     cmd::{find_buildfile, Execute},
 };
 
 #[cfg(feature = "dbg")]
 use std::time::Instant;
 use std::{env, fs::read_to_string, process::exit};
+
+#[macro_export]
+macro_rules! panic {
+    ($($tt: tt)*) => {
+        if cfg!(debug_assertions) {
+            std::panic!($($tt)*)
+        } else {
+            print!($($tt)*);
+            std::process::exit(1);
+        }
+    };
+}
 
 fn main() -> std::io::Result<()> {
     #[cfg(feature = "dbg")]

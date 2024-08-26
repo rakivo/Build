@@ -1,4 +1,5 @@
 use crate::{
+    panic,
     parsing::{
         eval::{
             If, Eval, Decl, Expr,
@@ -117,9 +118,9 @@ impl<'a> Parser<'a> {
     #[track_caller]
     fn report_err(err: Error, err_token: Option::<&Token>) -> ! {
         if let Some(errt) = err_token {
-            panic!("{errt}: [ERROR] {err}")
+            panic!("{errt}: [ERROR] {err}\n")
         } else {
-            panic!("[ERROR] {err}")
+            panic!("[ERROR] {err}\n")
         }
     }
 
@@ -149,7 +150,7 @@ impl<'a> Parser<'a> {
         // Check for expr
         if let Some(token) = line.get(eq_idx - 1) {
             if eq_idx + 1 >= line.len() {
-                panic!("Expected right side after expression")
+                panic!("Expected right side after expression\n")
             }
 
             'blk: {
@@ -192,6 +193,23 @@ impl<'a> Parser<'a> {
             TokenType::*
         };
 
+        // Skip the keyword
+        iter.next();
+
+        // SAFETY: It is guaranteed that `first.str` is actually an if keyword, because
+        //           you get into this function only if you have a literal, and if `IFS` contains `literal.str`.
+        let ifkind = unsafe { IfKind::try_from(first.str).unwrap_unchecked() };
+        let Some(left_side) = iter.next() else {
+            Self::report_err(Error::new(NoLeftSide, None), Some(first));
+        };
+
+        let right_side = if matches!(ifkind, IfKind::Eq | IfKind::Neq) {
+            let v = iter.next().unwrap_or_else(|| {
+                Self::report_err(Error::new(NoRightSide, None), Some(first))
+            });
+            Some(v)
+        } else { None };
+
         let mut endif = false;
         let mut body = Vec::new();
         let (mut else_body, mut else_flag) = (Vec::new(), false);
@@ -216,7 +234,7 @@ impl<'a> Parser<'a> {
                 } else if let Some(colon_idx) = line.iter().position(|x| matches!(x.typ, Colon)) {
                     Self::parse_job(line, iter2, colon_idx)
                 } else {
-                    todo!()
+                    Self::uft_err(line)
                 };
 
                 if else_flag {
@@ -227,24 +245,9 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let keyword = iter.next();
         if !endif {
-            Self::report_err(Error::new(NoClosingEndif, None), keyword);
+            Self::report_err(Error::new(NoClosingEndif, None), Some(first));
         }
-
-        // SAFETY: It is guaranteed that `first.str` is actually an if keyword, because
-        //           you get into this function only if you have a literal, and if `IFS` contains `literal.str`.
-        let ifkind = unsafe { IfKind::try_from(first.str).unwrap_unchecked() };
-        let Some(left_side) = iter.next() else {
-            Self::report_err(Error::new(NoLeftSide, None), keyword);
-        };
-
-        let right_side = if matches!(ifkind, IfKind::Eq | IfKind::Neq) {
-            let v = iter.next().unwrap_or_else(|| {
-                Self::report_err(Error::new(NoRightSide, None), keyword)
-            });
-            Some(v)
-        } else { None };
 
         let r#if = If::new(ifkind, left_side, right_side, body, else_body);
         Item::If(r#if)

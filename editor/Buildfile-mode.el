@@ -39,7 +39,7 @@
 
 (eval-and-compile
   (defconst Buildfile-instructions
-     '("ifdef" "ifndef" "ifeq" "ifneq" "endif" "shell" "addprefix" "vaddprefix")))
+     '("ifdef" "ifndef" "ifeq" "ifneq" "endif" "shell" "addprefix" "vaddprefix" "else" "export" "unexport")))
 
 (defconst Buildfile-highlights
   `((,(regexp-opt Buildfile-instructions 'symbols) . font-lock-keyword-face)
