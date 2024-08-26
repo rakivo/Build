@@ -13,7 +13,7 @@ use std::{env, fs::read_to_string, process::exit};
 
 fn main() -> std::io::Result<()> {
     #[cfg(feature = "dbg")]
-    let start_time = Instant::now();
+    let parser_start = Instant::now();
 
     let flags = parse_flags();
     if let Some(dir) = flags.env_dir.as_ref() {
@@ -31,13 +31,23 @@ fn main() -> std::io::Result<()> {
 
     let mut parser = Parser::new(&tokens);
     parser.parse();
-    parser.ast.parse(parser.items);
-    let jobs = parser.ast.jobs;
 
     #[cfg(feature = "dbg")]
     {
-        let end_time = start_time.elapsed().as_micros();
+        let end_time = parser_start.elapsed().as_micros();
         println!("Parsing done in {end_time}us");
+    }
+
+    #[cfg(feature = "dbg")]
+    let eval_start = Instant::now();
+
+    parser.eval.parse(parser.items);
+    let jobs = parser.eval.jobs;
+
+    #[cfg(feature = "dbg")]
+    {
+        let end_time = eval_start.elapsed().as_micros();
+        println!("Evaling done in {end_time}us");
     }
 
     let mut execute = Execute::new(jobs, flags);

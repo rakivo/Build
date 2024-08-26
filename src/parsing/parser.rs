@@ -1,7 +1,7 @@
 use crate::{
     parsing::{
-        ast::{
-            If, Ast, Decl, Expr,
+        eval::{
+            If, Eval, Decl, Expr,
             Item, Items, Job,
             Operation, IfKind
         },
@@ -98,7 +98,7 @@ macro_rules! collect_exports {
 }
 
 pub struct Parser<'a> {
-    pub ast: Ast<'a>,
+    pub eval: Eval<'a>,
     pub items: Items<'a>,
     iter: LinizedTokensIterator<'a>,
 }
@@ -107,7 +107,7 @@ impl<'a> Parser<'a> {
     #[inline]
     pub fn new(ts: &'a LinizedTokens<'a>) -> Self {
         Self {
-            ast: Ast::default(),
+            eval: Eval::default(),
             items: Items::new(),
             iter: ts.into_iter().peekable(),
         }
@@ -257,7 +257,6 @@ impl<'a> Parser<'a> {
         while let Some((wc, line)) = iter.peek() {
             // If the amount of spaces before the token is zero, it means that body of the job is ended.
             if wc.eq(&0) { break }
-
             body.push(line);
             iter.next();
         }

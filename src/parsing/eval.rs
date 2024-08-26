@@ -9,8 +9,9 @@ use crate::{
 use std::{
     env,
     fmt,
+    slice::Iter,
     process::exit,
-    collections::{HashMap, HashSet}
+    collections::{HashMap, HashSet},
 };
 
 pub struct Decl<'a> {
@@ -286,13 +287,32 @@ impl fmt::Display for If<'_> {
 pub type Items<'a> = Vec::<Item<'a>>;
 
 #[derive(Default)]
-pub struct Ast<'a> {
+pub struct Eval<'a> {
     pub jobs: Jobs,
     vars: HashMap::<&'a str, Vec::<String>>,
 }
 
-impl<'a> Ast<'a> {
+macro_rules! get_values {
+    ($self: expr, $tokens: expr; $names: tt $(,)?; $str: expr, $loc: expr) => {{
+        let len = $tokens.len();
+        $tokens.into_iter().fold(Vec::with_capacity(len), |mut value, $names| {
+            if !$str.starts_with("#") {
+                value.push($str.to_owned());
+                return value
+            }
+            value.extend($self.get_value__(&$str, &$loc));
+            value
+        })
+    }};
+}
+
+impl<'a> Eval<'a> {
     const VARIABLE_SYMBOL: char = '#';
+    const KEYWORDS: &'static [&'static str] = &[
+        "shell",
+        "addprefix",
+        "vaddprefix"
+    ];
     const PATTERNS: &'static [&'static str] = &[
         "<", "d",
         "@", "t",
@@ -306,6 +326,17 @@ impl<'a> Ast<'a> {
         } else {
             panic!("[ERROR] {err}")
         }
+    }
+
+    #[inline]
+    fn keyword_check(str: &str) -> Option::<&&str> {
+        Self::KEYWORDS.into_iter().find(|s| s == &&str)
+    }
+
+    #[inline]
+    #[track_caller]
+    const fn handle_keyword_here() -> ! {
+        panic!("HANDLE KEYWORD HERE")
     }
 
     fn detect_cycle(&self) -> bool {
@@ -391,6 +422,63 @@ impl<'a> Ast<'a> {
             .collect::<String>()
     }
 
+    fn get_parens_from_tokens(err_loc: &Loc, tokens: &[&Token]) -> (usize, usize) {
+        let Some(lparen_idx) = tokens.iter().position(|token| matches!(token.typ, TokenType::LParen)) else {
+            panic!("{err_loc} Expected lparen after `shell` keyword");
+        };
+
+        let Some(rparen_idx) = tokens.iter().position(|token| matches!(token.typ, TokenType::RParen)) else {
+            panic!("{err_loc} Expected closing rparen after the lparen", err_loc = tokens[lparen_idx].loc);
+        };
+
+        if lparen_idx + 1 == rparen_idx {
+            panic!("{err_loc} `shell` keyword with no commands inside");
+        }
+
+        (lparen_idx, rparen_idx)
+    }
+
+    fn eval_shell(&self, shell_loc: &Loc, tokens: &Vec::<&Token>, paren_idxs: Option::<(usize, usize)>) -> String {
+        let (lparen_idx, rparen_idx) = paren_idxs.unwrap_or({
+            Self::get_parens_from_tokens(shell_loc, tokens.as_slice())
+        });
+        let cmd = tokens[lparen_idx + 1..rparen_idx].into_iter().map(|t| {
+            if t.str.starts_with(Self::VARIABLE_SYMBOL) {
+                self.get_value__(t.str, &t.loc).join(" ")
+            } else {
+                t.str.to_owned()
+            }
+        }).collect::<Vec::<_>>().join(" ");
+
+        Execute::execute_cmd(&cmd, true, false).unwrap_or_else(|_| {
+            panic!("{shell_loc} Process exited with non-zero code")
+        })
+    }
+
+    fn eval_addprefix(&self, addprefix_loc: &Loc, tokens: &Vec::<&Token>, paren_idxs: Option::<(usize, usize)>, vpref: bool) -> Vec::<String> {
+        let (lparen_idx, rparen_idx) = paren_idxs.unwrap_or({
+            Self::get_parens_from_tokens(addprefix_loc, tokens.as_slice())
+        });
+        let Some(prefix) = tokens.get(lparen_idx + 1) else {
+            panic!("{addprefix_loc} `addprefix` without prefix")
+        };
+
+        let prefix_str = &prefix.str;
+        tokens[lparen_idx + 1 + 1..rparen_idx].into_iter().map(|t| {
+            if t.str.starts_with(Self::VARIABLE_SYMBOL) {
+                if vpref {
+                    format!("{prefix_str}{s}", s = self.get_value__(t.str, &t.loc).join(" "))
+                } else {
+                    self.get_value__(t.str, &t.loc).into_iter().map(|s| {
+                        format!("{prefix_str}{s}")
+                    }).collect::<Vec::<_>>().join(" ")
+                }
+            } else {
+                format!("{prefix_str}{s}", s = t.str)
+            }
+        }).collect()
+    }
+
     fn parse_decl(&mut self, decl: Decl<'a>) {
         use TokenType::{Plus, Minus};
 
@@ -398,36 +486,28 @@ impl<'a> Ast<'a> {
             println!("{l} got redeclared", l = decl.left_side);
         }
 
-        if matches!(decl.right_side.first(), Some(token) if token.str.starts_with("shell")) {
-            let shell_token = decl.right_side[0];
-
-            let Some(lparen_idx) = decl.right_side.iter().position(|token| matches!(token.typ, TokenType::LParen)) else {
-                panic!("{loc} Expected lparen after `shell` keyword", loc = shell_token.loc);
-            };
-
-            let Some(rparen_idx) = decl.right_side.iter().position(|token| matches!(token.typ, TokenType::RParen)) else {
-                panic!("{loc} Expected closing rparen after the lparen", loc = decl.right_side[lparen_idx].loc);
-            };
-
-            if lparen_idx + 1 == rparen_idx {
-                panic!("{loc} `shell` keyword with no commands inside", loc = shell_token.loc);
-            }
-
-            let cmd = decl.right_side[lparen_idx + 1..rparen_idx].into_iter().map(|t| {
-                if t.str.starts_with(Self::VARIABLE_SYMBOL) {
-                    self.get_value__(t.str, &t.loc).join(" ")
-                } else {
-                    t.str.to_owned()
-                }
-            }).collect::<Vec::<_>>().join(" ");
-
-            let value = Execute::execute_cmd(&cmd, true, false).unwrap_or_else(|_| {
-                panic!("{loc} Process exited with non-zero code", loc = shell_token.loc)
-            }).lines().map(ToOwned::to_owned).collect();
-
-            self.vars.insert(decl.left_side.str, value);
+        let Some(first) = decl.right_side.first() else {
+            self.vars.insert(decl.left_side.str, Vec::new());
             return
-        }
+        };
+
+        match Self::keyword_check(first.str) {
+            Some(&"shell") => {
+                let value = self.eval_shell(&first.loc, &decl.right_side, None).lines()
+                    .map(ToOwned::to_owned)
+                    .collect();
+
+                self.vars.insert(decl.left_side.str, value);
+                return
+            },
+            Some(&"addprefix") | Some(&"vaddprefix") => {
+                let value = self.eval_addprefix(&first.loc, &decl.right_side, None, first.str.eq("vaddprefix"));
+                self.vars.insert(decl.left_side.str, value);
+                return
+            }
+            Some(..) => Self::handle_keyword_here(),
+            None => {}
+        };
 
         let value = if decl.right_side.iter()
             .enumerate()
@@ -464,27 +544,9 @@ impl<'a> Ast<'a> {
                 tokens.push((s, &token.loc));
             }
 
-            let len = tokens.len();
-            tokens.into_iter().fold(Vec::with_capacity(len), |mut value, (str, loc)| {
-                if !str.starts_with("#") {
-                    value.push(str.to_owned());
-                    return value
-                }
-
-                value.extend(self.get_value__(&str, &loc));
-                value
-            })
+            get_values!(self, tokens; (str, loc); str, loc)
         } else {
-            let len = decl.right_side.len();
-            decl.right_side.into_iter().fold(Vec::with_capacity(len), |mut value, token| {
-                if !token.str.starts_with("#") {
-                    value.push(token.str.to_owned());
-                    return value
-                }
-
-                value.extend(self.get_value__(token.str, &token.loc));
-                value
-            })
+            get_values!(self, decl.right_side; token; token.str, token.loc)
         };
 
         self.vars.insert(decl.left_side.str, value);
@@ -499,23 +561,22 @@ impl<'a> Ast<'a> {
             &expr.left_side.str[1..]
         };
 
-        let mut value = Vec::new();
-        for token in expr.right_side {
-            if token.str.starts_with("#") {
-                if let Some(v) = self.vars.get(&token.str[1..]) {
-                    value.extend(v.to_owned());
-                } else {
-                    self.report_err(Error::new(UndefinedVariable, None), Some(&token.loc))
-                }
-            } else {
-                value.push(token.str.to_owned());
-            };
+        if !self.vars.contains_key(&key) {
+            self.report_err(Error::new(UndefinedVariable, None), Some(&expr.left_side.loc))
         }
 
-        let Some(decl) = self.vars.get_mut(&key) else {
-            self.report_err(Error::new(UndefinedVariable, None), Some(&expr.left_side.loc))
-        };
+        let value = expr.right_side.iter()
+            .fold(Vec::with_capacity(expr.right_side.len()),
+                |mut value, token|
+        {
+            if token.str.starts_with("#") {
+                value.extend(self.get_value__(token.str, &token.loc));
+            } else {
+                value.push(token.str.to_owned());
+            } value
+        });
 
+        let decl = unsafe { self.vars.get_mut(&key).unwrap_unchecked() };
         match expr.operation {
             Operation::PlusEqual  => decl.extend(value),
             Operation::MinusEqual => decl.retain(|s| !expr.right_side.iter().any(|t| t.str.eq(s))),
@@ -604,7 +665,7 @@ impl<'a> Ast<'a> {
                 Vec::<String>::new(),
                 0,
                 None::<Vec::<String>>,
-               None::<Vec::<String>>,
+                None::<Vec::<String>>,
             ), |(mut ret, count, add, sub), name_|
         // I have this count here to keep track of whether I am processing a variable or concatenating tokens.
         // In cases like: `echo #SRC_DIR##BIN_FILE#concat`, this function will output you the values of the two variables, which are `SRC_DIR` and `BIN_FILE`, the first `#` indicates the end of the first variable's name, and the second one indicates the start of another variable. If you didn't have the second `#`, the tokens following it would be treated as regular tokens, rather than a name of the variable.
@@ -634,7 +695,7 @@ impl<'a> Ast<'a> {
                 panic!("{loc}: [ERROR] Undefined variable")
             });
 
-            let tokens = value.iter().map(|x| x.to_string()).collect::<Vec::<_>>();
+            let tokens = value.iter().map(ToString::to_string).collect::<Vec::<_>>();
             if let Some(mut add_ts) = add {
                 let last = add_ts.last_mut().unwrap();
                 last.push(' ');
@@ -729,6 +790,43 @@ impl<'a> Ast<'a> {
         }
     }
 
+    fn target_check_for_keyword(&self, target: &'a [Token]) -> Option::<String> {
+        match Self::keyword_check(target[0].str) {
+            Some(&"shell") => {
+                Some(self.eval_shell(&target[0].loc, &target.iter().collect(), None))
+            },
+            Some(&"addprefix") | Some(&"vaddprefix") => {
+                Some(self.eval_addprefix(&target[0].loc, &target.iter().collect(), None, target[0].str.eq("vaddprefix")).join(" "))
+            }
+            Some(..) => Self::handle_keyword_here(),
+            None => None
+        }
+    }
+
+    fn get_tokens_until_rparen_from_iter(t: &'a Token, iter: &mut Iter::<'a, Token>) -> Vec::<&'a Token<'a>> {
+        let mut tokens = vec![t];
+        while let Some(t) = iter.next() {
+            tokens.push(t);
+            if matches!(t.typ, TokenType::RParen) { break }
+        } tokens
+    }
+
+    fn dependency_iter_check_for_keyword(&self, t: &'a Token, iter: &mut Iter::<'a, Token>) -> Option::<Vec::<String>> {
+        match Self::keyword_check(t.str) {
+            Some(&"shell") => {
+                let tokens = Self::get_tokens_until_rparen_from_iter(t, iter);
+                Some(self.eval_shell(&t.loc, &tokens, Some((0, tokens.len() - 1))).lines().map(ToOwned::to_owned).collect())
+            },
+            Some(&"addprefix") | Some(&"vaddprefix") => {
+                let tokens = Self::get_tokens_until_rparen_from_iter(t, iter);
+                let ret = self.eval_addprefix(&t.loc, &tokens, Some((0, tokens.len() - 1)), t.str.eq(""));
+                Some(ret)
+            }
+            Some(..) => Self::handle_keyword_here(),
+            None => None
+        }
+    }
+
     fn parse_job(&mut self, job: Job) {
         use {
             ErrorType::*,
@@ -737,22 +835,32 @@ impl<'a> Ast<'a> {
 
         let mut curr_job = CurrJob::default();
 
-        let str = job.target.iter().map(|t| t.str).collect::<Vec::<_>>().join(" ");
-        let target = self.get_value_for_job(&str, &job.target[0].loc, Target, &curr_job).join(" ");
+        let target = if let Some(keyword_tokens) = self.target_check_for_keyword(job.target) {
+            keyword_tokens
+        } else {
+            let str = job.target.iter().map(|t| t.str).collect::<Vec::<_>>().join(" ");
+            self.get_value_for_job(&str, &job.target[0].loc, Target, &curr_job).join(" ")
+        };
+
         curr_job.target = Some(&target);
 
-        let deps = job.dependencies.iter().fold(Vec::with_capacity(job.dependencies.len()),
-            |mut deps, t|
-        {
-            let value = self.get_value_for_job(t.str, &t.loc, Dependencies, &curr_job);
+        let mut iter = job.dependencies.into_iter();
+        let mut deps = Vec::with_capacity(job.dependencies.len() / 2);
+        while let Some(t) = iter.next() {
+            let value = if let Some(keyword_tokens) = self.dependency_iter_check_for_keyword(t, &mut iter) {
+                keyword_tokens
+            } else {
+                self.get_value_for_job(t.str, &t.loc, Dependencies, &curr_job)
+            };
+
             if value.iter().any(|s| target.eq(s)) {
                 let msg = format!("Job \"{target}\" depends on itself, so, infinite recursion detected");
                 let err = Error::new(JobDependsOnItself, Some(&msg));
                 self.report_err(err, Some(&t.loc));
             }
+
             deps.extend(value);
-            deps
-        });
+        }
 
         fn is_line_silent(line: &Vec::<String>) -> bool {
             matches!(line.first(), Some(t) if t.starts_with("@"))
