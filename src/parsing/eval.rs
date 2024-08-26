@@ -1,4 +1,5 @@
 use crate::{
+    panic,
     execution::cmd::{Jobs, Job as CmdJob, Execute},
     parsing::{
         parser::{IFEQ,  IFNEQ, IFDEF, IFNDEF},
@@ -191,31 +192,15 @@ pub enum Item<'a> {
     Unexport(Unexport<'a>)
 }
 
-enum ParsingSection {
-    Target,
-    Dependencies,
-    Body,
-}
-
 #[derive(Default)]
 struct CurrJob<'a> {
     target: Option::<&'a String>,
     dependencies: Option::<&'a Vec::<String>>,
 }
 
+#[derive(Debug)]
 pub enum IfKind {
     Eq, Neq, Def, Ndef
-}
-
-impl IfKind {
-    fn to_string(&self) -> &'static str {
-        match self {
-            Self::Eq   => IFEQ,
-            Self::Neq  => IFNEQ,
-            Self::Def  => IFDEF,
-            Self::Ndef => IFNDEF,
-        }
-    }
 }
 
 impl TryFrom::<&str> for IfKind {
@@ -232,6 +217,7 @@ impl TryFrom::<&str> for IfKind {
     }
 }
 
+#[derive(Debug)]
 pub struct If<'a> {
     kind: IfKind,
     left_side: &'a Token<'a>,
@@ -250,37 +236,6 @@ impl<'a> If<'a> {
        -> Self
     {
         Self { kind, left_side, right_side, body, else_body }
-    }
-}
-
-impl fmt::Debug for If<'_> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl fmt::Display for If<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let r#if = self.kind.to_string();
-        match self.kind {
-            IfKind::Eq  | IfKind::Neq   => writeln!(f, "{if} {l} {r}", l = self.left_side.str, r = unsafe { self.right_side.unwrap_unchecked() }.str)?,
-            IfKind::Def | IfKind::Ndef  => writeln!(f, "{if} {l}",     l = self.left_side.str)?,
-        };
-
-        for item in self.body.iter() {
-            write!(f, "\t{item:?}")?;
-        }
-
-        writeln!(f)?;
-        if !self.else_body.is_empty() {
-            writeln!(f, "else")?;
-            for item in self.else_body.iter() {
-                write!(f, "\t{item:?}")?;
-            }
-        }
-
-        write!(f, "\nendif")
     }
 }
 
@@ -335,7 +290,7 @@ impl<'a> Eval<'a> {
 
     #[inline]
     #[track_caller]
-    const fn handle_keyword_here() -> ! {
+    fn handle_keyword_here() -> ! {
         panic!("HANDLE KEYWORD HERE\n")
     }
 
@@ -731,61 +686,6 @@ impl<'a> Eval<'a> {
         ret
     }
 
-    fn get_value_for_job(&self, token_str: &str, token_loc: &Loc, section: ParsingSection, curr_job: &CurrJob) -> Vec::<String> {
-        use {
-            ErrorType::*,
-            ParsingSection::*,
-        };
-
-        const INVALID_DEP_PATTERN_NOTE: &'static str = "You can use \"$d\" and \"$<\" ONLY in body of job";
-        const INVALID_TARGET_PATTERN_NOTE: &'static str = "You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies";
-
-        if token_str.starts_with(Self::VARIABLE_SYMBOL) {
-            self.get_value__(token_str, &token_loc)
-        } else if token_str.starts_with('$') {
-            let name = Self::get_name(&token_str[1..]);
-            if name.is_empty() {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(token_loc));
-            }
-
-            if Self::PATTERNS.contains(&name.as_str()) {
-                match name.as_str() {
-                    "d" | "<" => if matches!(section, Dependencies | Target) {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc));
-                    } else if let Some(dep) = unsafe { curr_job.dependencies.unwrap_unchecked() }.first() {
-                        vec![dep.to_string()]
-                    } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&token_loc));
-                    },
-
-                    "ds" | "^" => if matches!(section, Dependencies | Target) {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc));
-                    } else if !unsafe { curr_job.dependencies.unwrap_unchecked() }.is_empty() {
-                        curr_job.dependencies.unwrap().iter().map(ToString::to_string).collect()
-                    } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&token_loc));
-                    },
-
-                    "t" | "@" => if matches!(section, Target) {
-                        self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection, Some(INVALID_TARGET_PATTERN_NOTE)), Some(&token_loc));
-                    } else if let Some(target) = curr_job.target {
-                        vec![target.to_owned()]
-                    } else {
-                        self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&token_loc));
-                    },
-
-                    _ => unreachable!()
-                }
-            } else if let Ok(value) = env::var(name) {
-                vec![value]
-            } else {
-                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token_loc))
-            }
-        } else {
-            vec![token_str.to_owned()]
-        }
-    }
-
     fn target_check_for_keyword(&self, target: &'a [Token]) -> Option::<String> {
         match Self::keyword_check(target[0].str) {
             Some(&"shell") => {
@@ -824,19 +724,37 @@ impl<'a> Eval<'a> {
     }
 
     fn parse_job(&mut self, job: Job) {
-        use {
-            ErrorType::*,
-            ParsingSection::*
-        };
+        use ErrorType::*;
+
+        const INVALID_DEP_PATTERN_NOTE: &'static str = "You can use \"$d\" and \"$<\" ONLY in body of job";
+        const INVALID_TARGET_PATTERN_NOTE: &'static str = "You can use \"$t\" and \"$@\" either in body of a job, or in its dependencies";
 
         // Temp `Job` instance to keep track of target and dependencies to expand patterns like `$t`/`$@`, `$d`/`$<` etc...
         let mut curr_job = CurrJob::default();
 
         let target = if let Some(keyword_tokens) = self.target_check_for_keyword(job.target) {
             keyword_tokens
-        } else {
+        } else if job.target[0].str.starts_with("$") {
+            let name = &job.target[0].str[1..];
+            let token_loc = &job.target[0].loc;
+
+            if Self::PATTERNS.contains(&name) {
+                match name {
+                    "d"  | "<" => self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc)),
+                    "t"  | "@" => self.report_err(Error::new(UnexpectedTargetSpecialSymbolInTargetSection, Some(INVALID_TARGET_PATTERN_NOTE)), Some(&token_loc)),
+                    "ds" | "^" => self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc)),
+                    _ => unreachable!()
+                }
+            } else if let Ok(value) = env::var(name) {
+                value
+            } else {
+                self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token_loc))
+            }
+        } else if job.target[0].str.starts_with(Self::VARIABLE_SYMBOL) {
             let str = job.target.iter().map(|t| t.str).collect::<Vec::<_>>().join(" ");
-            self.get_value_for_job(&str, &job.target[0].loc, Target, &curr_job).join(" ")
+            self.get_value__(&str, &job.target[0].loc).join(" ")
+        } else {
+            job.target.iter().map(|t| t.str).collect::<Vec::<_>>().join(" ")
         };
 
         curr_job.target = Some(&target);
@@ -846,8 +764,24 @@ impl<'a> Eval<'a> {
         while let Some(t) = iter.next() {
             let value = if let Some(keyword_tokens) = self.dependency_iter_check_for_keyword(t, &mut iter) {
                 keyword_tokens
+            } else if job.target[0].str.starts_with("$") {
+                let name = &job.target[0].str[1..];
+                let token_loc = &job.target[0].loc;
+
+                if Self::PATTERNS.contains(&name) {
+                    match name {
+                        "t"  | "@" => vec![unsafe { curr_job.target.unwrap_unchecked() }.to_owned()],
+                        "d"  | "<" => self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc)),
+                        "ds" | "^" => self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc)),
+                        _ => unreachable!()
+                    }
+                } else if let Ok(value) = env::var(name) {
+                    vec![value]
+                } else {
+                    self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token_loc))
+                }
             } else {
-                self.get_value_for_job(t.str, &t.loc, Dependencies, &curr_job)
+                self.get_value__(t.str, &t.loc)
             };
 
             if value.iter().any(|s| target.eq(s)) {
@@ -866,7 +800,20 @@ impl<'a> Eval<'a> {
         }
 
         let body = job.body.into_iter().fold(Vec::new(), |mut body, line| {
-            let mut line = line.iter().map(|t| self.get_value_for_job(t.str, &t.loc, Body, &curr_job).join(" ")).collect();
+            let mut line = line.into_iter().map(|t| {
+                if t.str.starts_with(Self::VARIABLE_SYMBOL) {
+                    self.get_value__(t.str, &t.loc).join(" ")
+                } else {
+                    t.str.to_owned()
+                }
+            }).map(|mut s| {
+                s = s.replace("$t", unsafe { curr_job.target.unwrap_unchecked() });
+                if s.contains("$d") {
+                    s.replace("$d", unsafe { curr_job.dependencies.unwrap_unchecked() }.first().unwrap_or_else(|| self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&job.target[0].loc))))
+                } else { s }
+            }).collect::<Vec::<_>>();
+
+            // let mut line = line.iter().map(|t| self.get_value_for_job(t.str, &t.loc, Body, &curr_job).join(" ")).collect();
             let silent = is_line_silent(&line);
             if silent { line[0].remove(0); }
             body.push((silent, line));

@@ -18,7 +18,7 @@ ifdef $DEV
 
     #BIN_FILE: #SRC_DIR/main.rs #SRC_FILES
         cargo #WHAT --manifest-path = #DEV_DIR/Cargo.toml --features=dbg
-        @rm $t && mv ./dev/target/debug/buildfile $t
+        @rm $t && mv ./dev/target/debug/$t $t
 else
     ifdef $DEBUG
         #RUSTFLAGS+=--cfg='feature="dbg"'
