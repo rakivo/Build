@@ -2,6 +2,8 @@ DEV_DIR=dev
 SRC_DIR=src
 BIN_FILE=build
 SRC_FILES=shell(ls #SRC_DIR/parsing/*.rs) shell(ls #SRC_DIR/execution/*.rs)
+MAIN=main.rs
+EVAL=eval.rs
 
 RUSTFLAGS=-C opt-level=3
 

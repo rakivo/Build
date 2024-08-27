@@ -10,11 +10,12 @@ use crate::{
 use std::{
     env,
     fmt,
-    slice::Iter,
     process::exit,
+    ops::RangeInclusive,
     collections::{HashMap, HashSet},
 };
 
+#[derive(Debug)]
 pub struct Decl<'a> {
     pub left_side: &'a Token<'a>,
     pub right_side: Vec::<&'a Token<'a>>,
@@ -30,22 +31,6 @@ impl<'a> Decl<'a> {
     }
 }
 
-impl fmt::Debug for Decl<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl fmt::Display for Decl<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{l} =", l = self.left_side.str)?;
-        for t in self.right_side.iter() {
-            write!(f, " {s}", s = t.str)?
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 pub enum Operation {
     Plus,
@@ -55,6 +40,7 @@ pub enum Operation {
     MinusEqual,
 }
 
+#[derive(Debug)]
 pub struct Expr<'a> {
     pub left_side: &'a Token<'a>,
     pub operation: Operation,
@@ -71,20 +57,6 @@ impl<'a> Expr<'a> {
         Self { left_side, operation, right_side }
     }
 }
-
-impl fmt::Debug for Expr<'_> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
-    }
-}
-
-impl fmt::Display for Expr<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{l} {o:?} {r:?}", l = self.left_side.str, o = self.operation, r = self.right_side)
-    }
-}
-
 
 #[derive(Debug)]
 pub struct Job<'a> {
@@ -104,25 +76,7 @@ impl<'a> Job<'a> {
     }
 }
 
-impl fmt::Display for Job<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}: ", self.target)?;
-        for t in self.dependencies {
-            write!(f, "{s} ", s = t.str)?;
-        }
-
-        writeln!(f)?;
-        for line in self.body.iter() {
-            write!(f, "   ")?;
-            for t in line.iter() {
-                write!(f, " {s}", s = t.str)?
-            }
-        }
-
-        Ok(())
-    }
-}
-
+#[allow(unused)]
 pub enum ErrorType {
     UndefinedVariable,
     JobDependsOnItself,
@@ -699,28 +653,40 @@ impl<'a> Eval<'a> {
         }
     }
 
-    fn get_tokens_until_rparen_from_iter(t: &'a Token, iter: &mut Iter::<'a, Token>) -> Vec::<&'a Token<'a>> {
-        let mut tokens = vec![t];
-        while let Some(t) = iter.next() {
-            tokens.push(t);
-            if matches!(t.typ, TokenType::RParen) { break }
-        } tokens
-    }
+    // TODO: Expand keywords
+    fn line_expand_values(&self, line_: &'a [Token], locs_map: &'a mut HashMap::<RangeInclusive::<usize>, &'a Loc<'a>>) -> String {
+        let line = line_.into_iter()
+            .fold(String::with_capacity((line_.len() as f32 * 1.2) as _),
+                |mut ret, t|
+        {
+            locs_map.insert(ret.len()..=t.str.len() + ret.len(), &t.loc);
+            ret.push_str(t.str);
+            ret.push(' ');
+            ret
+        });
 
-    fn dependency_iter_check_for_keyword(&self, t: &'a Token, iter: &mut Iter::<'a, Token>) -> Option::<Vec::<String>> {
-        match Self::keyword_check(t.str) {
-            Some(&"shell") => {
-                let tokens = Self::get_tokens_until_rparen_from_iter(t, iter);
-                Some(self.eval_shell(&t.loc, &tokens, Some((0, tokens.len() - 1))).lines().map(ToOwned::to_owned).collect())
-            },
-            Some(&"addprefix") | Some(&"vaddprefix") => {
-                let tokens = Self::get_tokens_until_rparen_from_iter(t, iter);
-                let ret = self.eval_addprefix(&t.loc, &tokens, Some((0, tokens.len() - 1)), t.str.eq(""));
-                Some(ret)
-            }
-            Some(..) => Self::handle_keyword_here(),
-            None => None
+        let idxs = line.char_indices().filter_map(|(idx, c)| {
+            if c.eq(&'#') {
+                let len = line[idx + 1..].chars()
+                    .take_while(|c| c.is_alphabetic() || c.eq(&'_')).count();
+                Some((idx, len))
+            } else { None }
+        }).collect::<Vec::<_>>();
+
+        let mut last = 0;
+        let mut ret = String::with_capacity(line_.len() / 2);
+        for (idx, len) in idxs.into_iter() {
+            ret.push_str(&line[last..idx]);
+            last = idx + len + 1;
+            let loc = locs_map.iter().find_map(|(k, v)| if k.contains(&last) {
+                Some(v)
+            } else { None }).unwrap();
+
+            let value = self.get_value__(&line[idx..idx+len+1], loc).join(" ");
+            ret.push_str(&value);
         }
+        ret.push_str(&line[last..]);
+        ret
     }
 
     fn parse_job(&mut self, job: Job) {
@@ -756,69 +722,32 @@ impl<'a> Eval<'a> {
         } else {
             job.target.iter().map(|t| t.str).collect::<Vec::<_>>().join(" ")
         };
-
         curr_job.target = Some(&target);
 
-        let mut iter = job.dependencies.into_iter();
-        let mut deps = Vec::with_capacity(job.dependencies.len() / 2);
-        while let Some(t) = iter.next() {
-            let value = if let Some(keyword_tokens) = self.dependency_iter_check_for_keyword(t, &mut iter) {
-                keyword_tokens
-            } else if job.target[0].str.starts_with("$") {
-                let name = &job.target[0].str[1..];
-                let token_loc = &job.target[0].loc;
-
-                if Self::PATTERNS.contains(&name) {
-                    match name {
-                        "t"  | "@" => vec![unsafe { curr_job.target.unwrap_unchecked() }.to_owned()],
-                        "d"  | "<" => self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc)),
-                        "ds" | "^" => self.report_err(Error::new(UnexpectedDependencySpecialSymbolNotInBody, Some(INVALID_DEP_PATTERN_NOTE)), Some(&token_loc)),
-                        _ => unreachable!()
-                    }
-                } else if let Ok(value) = env::var(name) {
-                    vec![value]
-                } else {
-                    self.report_err(Error::new(UndefinedEnviromentVariable, None), Some(&token_loc))
-                }
-            } else {
-                self.get_value__(t.str, &t.loc)
-            };
-
-            if value.iter().any(|s| target.eq(s)) {
-                let msg = format!("Job \"{target}\" depends on itself, so, infinite recursion detected");
-                let err = Error::new(JobDependsOnItself, Some(&msg));
-                self.report_err(err, Some(&t.loc));
-            }
-
-            deps.extend(value);
-        }
-
+        let mut map = HashMap::new();
+        let deps = self.line_expand_values(job.dependencies, &mut map).split_ascii_whitespace().map(ToOwned::to_owned).collect();
         curr_job.dependencies = Some(&deps);
 
-        fn is_line_silent(line: &Vec::<String>) -> bool {
-            matches!(line.first(), Some(t) if t.starts_with("@"))
-        }
+        let body = job.body.into_iter().map(|line_| {
+            let mut locs_map = HashMap::with_capacity(line_.len());
+            let mut ret = self.line_expand_values(line_, &mut locs_map);
 
-        let body = job.body.into_iter().fold(Vec::new(), |mut body, line| {
-            let mut line = line.into_iter().map(|t| {
-                if t.str.starts_with(Self::VARIABLE_SYMBOL) {
-                    self.get_value__(t.str, &t.loc).join(" ")
-                } else {
-                    t.str.to_owned()
-                }
-            }).map(|mut s| {
-                s = s.replace("$t", unsafe { curr_job.target.unwrap_unchecked() });
-                if s.contains("$d") {
-                    s.replace("$d", unsafe { curr_job.dependencies.unwrap_unchecked() }.first().unwrap_or_else(|| self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&job.target[0].loc))))
-                } else { s }
-            }).collect::<Vec::<_>>();
+            ret = ret.replace("$t", unsafe { curr_job.target.unwrap_unchecked() });
+            if ret.contains("$ds") {
+                ret = ret.replace("$ds", &unsafe { curr_job.dependencies.unwrap_unchecked() }.join(" "));
+            } else if ret.contains("$d") {
+                ret = ret.replace("$d", unsafe { curr_job.dependencies.unwrap_unchecked() }.first().unwrap_or_else(|| self.report_err(Error::new(UnexpectedDependencySpecialSymbolWhileNoDependencies, None), Some(&line_[0].loc))));
+            }
 
-            // let mut line = line.iter().map(|t| self.get_value_for_job(t.str, &t.loc, Body, &curr_job).join(" ")).collect();
-            let silent = is_line_silent(&line);
-            if silent { line[0].remove(0); }
-            body.push((silent, line));
-            body
-        });
+            let silent = matches!(ret.chars().nth(0), Some(c) if c.eq(&'@'));
+            let ret = if silent {
+                ret[1..].to_owned()
+            } else {
+                ret
+            };
+
+            (silent, ret)
+        }).collect();
 
         let job = CmdJob::new(target, deps, body);
         self.jobs.push(job);
@@ -835,3 +764,7 @@ impl<'a> Eval<'a> {
         }
     }
 }
+
+/* TODO:
+    Handle keywords, exprs in `line_expand_values` and use this function for all the declarations.
+*/

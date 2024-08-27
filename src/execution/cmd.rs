@@ -16,7 +16,7 @@ use crate::{panic, parsing::flags::Flags};
 
 const BUILD_FILE_NAME: &'static str = "Buildfile";
 
-pub type Body = Vec::<(bool, Vec::<String>)>;
+pub type Body = Vec::<(bool, String)>;
 
 #[derive(Debug)]
 pub struct Job {
@@ -142,8 +142,8 @@ impl Execute {
     }
 
     #[inline]
-    pub fn render_cmd(cmds: &[String]) -> String {
-        cmds.join(" ").replace(" = ", "=")
+    pub fn render_cmd(cmds: &String) -> String {
+        cmds.replace(" = ", "=")
     }
 
     pub const CMD_ARG:  &'static str = if cfg!(windows) {"cmd"} else {"sh"};
